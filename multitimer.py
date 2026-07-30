@@ -6,13 +6,13 @@
 - 原生 NSTextField / NSButton / NSProgressIndicator
 - 不在 Dock 显示 (ActivationPolicy = Accessory)
 - 输入任务名 + 点预设时间即开始; 可并行多个倒计时
-- 预设可增删改, 本地持久化; 必须先输入任务名才能开始计时
+- 预设可增删改, 本地持久化; 未填任务名时自动使用 "任务 N"
 - 每行带进度条、＋1 分钟按钮; 任务名完整显示、放不下换行
-- 到点发送静音 macOS 通知 (osascript); 结束后自动移除
+- 到点由 MultiTimer.app 通过 UNUserNotificationCenter 发出可交互通知
+  (点击 "已检查" 按钮 => 直接从列表中移除对应倒计时)
 """
 
 import json
-import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -20,6 +20,20 @@ from pathlib import Path
 import objc
 from Foundation import NSObject, NSTimer, NSMakeRect, NSMakeSize
 from PyObjCTools import AppHelper
+from UserNotifications import (
+    UNUserNotificationCenter,
+    UNMutableNotificationContent,
+    UNNotificationRequest,
+    UNNotificationAction,
+    UNNotificationCategory,
+    UNAuthorizationOptionAlert,
+    UNAuthorizationOptionSound,
+    UNNotificationActionOptionNone,
+    UNNotificationCategoryOptionNone,
+    UNNotificationPresentationOptionBanner,
+    UNNotificationPresentationOptionList,
+    UNNotificationPresentationOptionSound,
+)
 from AppKit import (
     NSApplication,
     NSApp,
@@ -85,24 +99,8 @@ def fmt_duration(seconds: float) -> str:
     return fmt_remaining(seconds)
 
 
-_NOTIFY_SCRIPT = (
-    "on run argv\n"
-    "  display notification (item 3 of argv) "
-    "with title (item 1 of argv) subtitle (item 2 of argv)\n"
-    "end run"
-)
-
-
-def send_notification(title: str, subtitle: str, message: str) -> None:
-    """osascript 发送 macOS 通知 (无 sound => 静音); argv 传参避免特殊字符问题。"""
-    try:
-        subprocess.Popen(
-            ["osascript", "-e", _NOTIFY_SCRIPT, title, subtitle, message],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        pass
+_NOTIF_CATEGORY = "TIMER_DONE"
+_NOTIF_ACTION_CHECK = "MARK_CHECKED"
 
 
 def load_state() -> dict:
@@ -196,6 +194,7 @@ class MultiTimerApp(NSObject):
         self.timers = []          # dict: id/label/end_ts/duration/view/name/progress/actions
         self._retain = []         # 全局 target 保活
         self._closed_at = 0.0
+        self._setup_notifications()
         self._build_main_menu()
         self._build_status_item()
         self._build_popover()
@@ -275,7 +274,7 @@ class MultiTimerApp(NSObject):
 
         # 输入框
         self.input_field = NSTextField.textFieldWithString_("")
-        self.input_field.setPlaceholderString_("先输入任务名, 再点时间开始")
+        self.input_field.setPlaceholderString_("任务名 (留空则自动命名)")
         root.addArrangedSubview_(self.input_field)
         self._fill_width(self.input_field)
 
@@ -394,12 +393,7 @@ class MultiTimerApp(NSObject):
     def _start_timer(self, seconds):
         label = self.input_field.stringValue().strip()
         if not label:
-            # 没有任务名不开始计时: 提示先填写任务名
-            self.input_field.setPlaceholderString_("⚠️ 请先输入任务名")
-            win = self.input_field.window()
-            if win is not None:
-                win.makeFirstResponder_(self.input_field)
-            return
+            label = self._default_label()
         timer = {
             "id": uuid.uuid4().hex,
             "label": label,
@@ -408,9 +402,18 @@ class MultiTimerApp(NSObject):
         }
         self._add_timer_row(timer)
         self.input_field.setStringValue_("")
-        self.input_field.setPlaceholderString_("先输入任务名, 再点时间开始")
+        self.input_field.setPlaceholderString_("任务名 (留空则自动命名)")
         self._persist()
         self._update_size()
+
+    def _default_label(self):
+        used = {t.get("label") for t in self.timers}
+        i = 1
+        while True:
+            candidate = f"任务 {i}"
+            if candidate not in used:
+                return candidate
+            i += 1
 
     def _add_timer_row(self, timer):
         actions = []
@@ -434,13 +437,23 @@ class MultiTimerApp(NSObject):
         remaining.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(12, 0))
         remaining.setContentHuggingPriority_forOrientation_(750, NSLayoutConstraintOrientationHorizontal)
 
-        plus = _button("＋1", self._make_extend_cb(timer), actions, small=True)
+        plus1 = _button("＋1", self._make_extend_cb(timer, 60), actions, small=True)
+        plus10 = _button("＋10", self._make_extend_cb(timer, 600), actions, small=True)
+        plus60 = _button("＋60", self._make_extend_cb(timer, 3600), actions, small=True)
         cancel = _button("✕", self._make_cancel_cb(timer), actions, small=True)
+        restart = _button("↻ 重新计时", self._make_restart_cb(timer), actions, small=True)
+        done = _button("✓ 已检查", self._make_cancel_cb(timer), actions, small=True, accent=True)
+        restart.setHidden_(True)
+        done.setHidden_(True)
 
         bottom.addArrangedSubview_(progress)
         bottom.addArrangedSubview_(remaining)
-        bottom.addArrangedSubview_(plus)
+        bottom.addArrangedSubview_(plus1)
+        bottom.addArrangedSubview_(plus10)
+        bottom.addArrangedSubview_(plus60)
         bottom.addArrangedSubview_(cancel)
+        bottom.addArrangedSubview_(restart)
+        bottom.addArrangedSubview_(done)
         rowv.addArrangedSubview_(bottom)
 
         self.timers_stack.addArrangedSubview_(rowv)
@@ -453,17 +466,30 @@ class MultiTimerApp(NSObject):
         timer["view"] = rowv
         timer["progress"] = progress
         timer["remaining"] = remaining
+        timer["plus1"] = plus1
+        timer["plus10"] = plus10
+        timer["plus60"] = plus60
+        timer["cancel"] = cancel
+        timer["restart"] = restart
+        timer["done"] = done
         timer["actions"] = actions
+        timer.setdefault("finished", False)
         self.timers.append(timer)
         self._retain.extend(actions)
-        self._update_row(timer)
+        if timer["finished"]:
+            self._apply_finished_style(timer)
+        else:
+            self._update_row(timer)
         self._update_section()
 
-    def _make_extend_cb(self, timer):
-        return lambda s: self._extend_timer(timer, 60)
+    def _make_extend_cb(self, timer, seconds):
+        return lambda s: self._extend_timer(timer, seconds)
 
     def _make_cancel_cb(self, timer):
         return lambda s: self._cancel_timer(timer)
+
+    def _make_restart_cb(self, timer):
+        return lambda s: self._restart_timer(timer)
 
     def _extend_timer(self, timer, seconds):
         timer["end_ts"] += seconds
@@ -486,6 +512,7 @@ class MultiTimerApp(NSObject):
                 self._retain.remove(a)
         if timer in self.timers:
             self.timers.remove(timer)
+        self._clear_delivered_notification(timer.get("id"))
         self._update_section()
 
     def _update_row(self, timer):
@@ -509,17 +536,121 @@ class MultiTimerApp(NSObject):
         )
 
     def tick_(self, _timer):
-        finished = []
+        newly_finished = []
         for timer in self.timers:
+            if timer.get("finished"):
+                continue
             self._update_row(timer)
             if timer["end_ts"] - time.time() <= 0:
-                finished.append(timer)
-        for timer in finished:
-            send_notification(APP_NAME, timer["label"], "时间到, 去检查一下吧!")
-            self._remove_timer(timer)
-        if finished:
+                newly_finished.append(timer)
+        for timer in newly_finished:
+            self._send_finish_notification(timer)
+            timer["finished"] = True
+            self._apply_finished_style(timer)
+        if newly_finished:
             self._persist()
             self._update_size()
+
+    def _apply_finished_style(self, timer):
+        timer["remaining"].setStringValue_("时间到")
+        timer["remaining"].setTextColor_(NSColor.systemRedColor())
+        timer["progress"].setDoubleValue_(0.0)
+        timer["plus1"].setHidden_(True)
+        timer["plus10"].setHidden_(True)
+        timer["plus60"].setHidden_(True)
+        timer["cancel"].setHidden_(True)
+        timer["restart"].setHidden_(False)
+        timer["done"].setHidden_(False)
+
+    def _apply_running_style(self, timer):
+        timer["plus1"].setHidden_(False)
+        timer["plus10"].setHidden_(False)
+        timer["plus60"].setHidden_(False)
+        timer["cancel"].setHidden_(False)
+        timer["restart"].setHidden_(True)
+        timer["done"].setHidden_(True)
+
+    def _restart_timer(self, timer):
+        timer["finished"] = False
+        timer["end_ts"] = time.time() + timer["duration"]
+        self._clear_delivered_notification(timer.get("id"))
+        self._apply_running_style(timer)
+        self._update_row(timer)
+        self._persist()
+        self._update_size()
+
+    # -- 通知 (UNUserNotificationCenter, 从 MultiTimer.app 发出) --------------
+    def _setup_notifications(self):
+        try:
+            center = UNUserNotificationCenter.currentNotificationCenter()
+        except Exception:
+            self.notif_center = None
+            return
+        self.notif_center = center
+        center.setDelegate_(self)
+        center.requestAuthorizationWithOptions_completionHandler_(
+            UNAuthorizationOptionAlert | UNAuthorizationOptionSound,
+            lambda granted, err: None,
+        )
+        check = UNNotificationAction.actionWithIdentifier_title_options_(
+            _NOTIF_ACTION_CHECK, "已检查", UNNotificationActionOptionNone
+        )
+        category = UNNotificationCategory.categoryWithIdentifier_actions_intentIdentifiers_options_(
+            _NOTIF_CATEGORY, [check], [], UNNotificationCategoryOptionNone
+        )
+        center.setNotificationCategories_({category})
+
+    def _send_finish_notification(self, timer):
+        if getattr(self, "notif_center", None) is None:
+            return
+        content = UNMutableNotificationContent.alloc().init()
+        content.setTitle_(APP_NAME)
+        content.setSubtitle_(timer["label"])
+        content.setBody_("时间到, 点击 '已检查' 移除")
+        content.setCategoryIdentifier_(_NOTIF_CATEGORY)
+        content.setUserInfo_({"timer_id": timer["id"]})
+        request = UNNotificationRequest.requestWithIdentifier_content_trigger_(
+            timer["id"], content, None
+        )
+        self.notif_center.addNotificationRequest_withCompletionHandler_(
+            request, lambda err: None
+        )
+
+    def _clear_delivered_notification(self, timer_id):
+        if not timer_id or getattr(self, "notif_center", None) is None:
+            return
+        self.notif_center.removeDeliveredNotificationsWithIdentifiers_([timer_id])
+        self.notif_center.removePendingNotificationRequestsWithIdentifiers_([timer_id])
+
+    def _check_by_id(self, timer_id):
+        if not timer_id:
+            return
+        for t in list(self.timers):
+            if t.get("id") == timer_id:
+                self._cancel_timer(t)
+                return
+
+    # UNUserNotificationCenterDelegate ------------------------------------
+    def userNotificationCenter_willPresentNotification_withCompletionHandler_(
+        self, _center, _notification, completion
+    ):
+        completion(
+            UNNotificationPresentationOptionBanner
+            | UNNotificationPresentationOptionList
+            | UNNotificationPresentationOptionSound
+        )
+
+    def userNotificationCenter_didReceiveNotificationResponse_withCompletionHandler_(
+        self, _center, response, completion
+    ):
+        try:
+            action_id = response.actionIdentifier()
+            if action_id == _NOTIF_ACTION_CHECK:
+                info = response.notification().request().content().userInfo()
+                timer_id = info.get("timer_id") if info else None
+                self._check_by_id(timer_id)
+        finally:
+            completion()
 
     # -- 弹出/收起 ---------------------------------------------------------
     def _toggle_popover(self):

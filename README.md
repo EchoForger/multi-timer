@@ -14,7 +14,7 @@ MultiTimer 常驻菜单栏，不占用 Dock 空间。输入任务名称并选择
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="dark.png">
     <source media="(prefers-color-scheme: light)" srcset="light.png">
-    <img src="light.png" alt="MultiTimer 软件界面" width="720">
+    <img src="light.png" alt="MultiTimer 软件界面" width="520">
   </picture>
 </p>
 

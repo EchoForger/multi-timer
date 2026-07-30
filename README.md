@@ -10,9 +10,13 @@ MultiTimer 常驻菜单栏，不占用 Dock 空间。输入任务名称并选择
 
 ## 界面预览
 
-| 浅色模式 | 深色模式 |
-| :---: | :---: |
-| <img src="light.png" alt="MultiTimer 浅色模式界面" width="420"> | <img src="dark.png" alt="MultiTimer 深色模式界面" width="420"> |
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="light.png">
+    <img src="light.png" alt="MultiTimer 软件界面" width="720">
+  </picture>
+</p>
 
 ## 功能特性
 

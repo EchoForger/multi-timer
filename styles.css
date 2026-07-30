@@ -852,6 +852,14 @@ button {
   line-height: 1.8;
 }
 
+.install-copy .install-note {
+  max-width: 440px;
+  margin-top: 22px;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
 .button-white {
   background: #fff;
   color: #211a16;

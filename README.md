@@ -90,6 +90,51 @@ brew uninstall --cask multi-timer
 ~/.config/multitimer/state.json
 ```
 
+## 开发者
+
+### 从源码运行
+
+需要 macOS 和 Python 3.9 或更高版本：
+
+```bash
+git clone https://github.com/EchoForger/multi-timer.git
+cd multi-timer
+
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -e .
+
+multitimer
+```
+
+开发过程中也可以直接运行：
+
+```bash
+python3 multitimer.py
+```
+
+### 打包 macOS App
+
+仓库已经包含 PyInstaller 配置：
+
+```bash
+python3 -m pip install pyinstaller
+pyinstaller MultiTimer.spec --noconfirm --clean
+```
+
+构建结果位于 `dist/MultiTimer.app`。
+
+### 参与贡献
+
+欢迎提交 Issue 和 Pull Request。提交前请至少完成基础语法检查：
+
+```bash
+python3 -m compileall -q multitimer.py
+```
+
+修改界面时，请同时检查浅色和深色模式、长任务名换行以及计时结束状态。
+
 ## 开源
 
 MultiTimer 使用 Python、PyObjC 和 AppKit 构建，基于 [MIT License](LICENSE) 开源。欢迎提交 [Issue](https://github.com/EchoForger/multi-timer/issues) 和 Pull Request。

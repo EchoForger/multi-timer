@@ -6,7 +6,7 @@
 - 原生 NSTextField / NSButton / NSProgressIndicator
 - 不在 Dock 显示 (ActivationPolicy = Accessory)
 - 输入任务名 + 点预设时间即开始; 可并行多个倒计时
-- 预设可增删改, 本地持久化; 任务名留空自动命名
+- 预设可增删改, 本地持久化; 必须先输入任务名才能开始计时
 - 每行带进度条、＋1 分钟按钮; 任务名完整显示、放不下换行
 - 到点发送静音 macOS 通知 (osascript); 结束后自动移除
 """
@@ -15,7 +15,6 @@ import json
 import subprocess
 import time
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 import objc
@@ -252,11 +251,7 @@ class MultiTimerApp(NSObject):
 
         # 输入框
         self.input_field = NSTextField.textFieldWithString_("")
-        self.input_field.setPlaceholderString_("任务名 (留空自动命名)")
-        enter = _Action.alloc().initWithCallback_(lambda s: self._start_first_preset())
-        self._retain.append(enter)
-        self.input_field.setTarget_(enter)
-        self.input_field.setAction_("invoke:")
+        self.input_field.setPlaceholderString_("先输入任务名, 再点时间开始")
         root.addArrangedSubview_(self.input_field)
         self._fill_width(self.input_field)
 
@@ -364,10 +359,6 @@ class MultiTimerApp(NSObject):
             self._update_size()
 
     # -- 启动倒计时 --------------------------------------------------------
-    def _start_first_preset(self):
-        if self.presets:
-            self._start_timer(self.presets[0]["seconds"])
-
     def _start_custom(self):
         try:
             minutes = float(self.custom_field.stringValue().strip())
@@ -379,7 +370,12 @@ class MultiTimerApp(NSObject):
     def _start_timer(self, seconds):
         label = self.input_field.stringValue().strip()
         if not label:
-            label = datetime.now().strftime("任务-%H%M%S")
+            # 没有任务名不开始计时: 提示先填写任务名
+            self.input_field.setPlaceholderString_("⚠️ 请先输入任务名")
+            win = self.input_field.window()
+            if win is not None:
+                win.makeFirstResponder_(self.input_field)
+            return
         timer = {
             "id": uuid.uuid4().hex,
             "label": label,
@@ -388,6 +384,7 @@ class MultiTimerApp(NSObject):
         }
         self._add_timer_row(timer)
         self.input_field.setStringValue_("")
+        self.input_field.setPlaceholderString_("先输入任务名, 再点时间开始")
         self._persist()
         self._update_size()
 

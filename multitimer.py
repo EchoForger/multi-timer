@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QEvent, Signal
-from PySide6.QtGui import QFont, QFontMetrics, QIcon, QPixmap, QPainter, QPen, QColor
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QPen, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -75,6 +75,12 @@ QPushButton#preset:hover { background: #0a78e6; }
 QPushButton#preset:pressed { background: #0a6ccc; }
 QPushButton#ghost { background: transparent; color: #8a8a90; padding: 2px; }
 QPushButton#ghost:hover { color: #d9534f; }
+QPushButton#mini {
+    background: #eaf3ff; color: #0a84ff; font-weight: 600;
+    border-radius: 6px; padding: 2px 0;
+}
+QPushButton#mini:hover { background: #d8ebff; }
+QPushButton#mini:pressed { background: #c4e0ff; }
 #caption { color: #9a9aa0; font-size: 11px; }
 QProgressBar {
     border: none; border-radius: 3px; background: #e6e6eb;
@@ -225,28 +231,55 @@ class PresetEditor(QDialog):
 # ---------------------------------------------------------------------------
 # 单个倒计时行
 # ---------------------------------------------------------------------------
+def _wrappable(text: str) -> str:
+    """插入零宽空格作为换行点, 让长任务名 (如 a_b_c...) 也能在放不下时换行。"""
+    out = []
+    run = 0
+    for ch in text:
+        out.append(ch)
+        run += 1
+        if ch in "_-./\\ ":
+            out.append("\u200b")
+            run = 0
+        elif run >= 8:
+            out.append("\u200b")
+            run = 0
+    return "".join(out)
+
+
 class TimerRow(QFrame):
-    def __init__(self, timer: dict, on_cancel):
+    def __init__(self, timer: dict, on_cancel, on_extend):
         super().__init__()
         self.timer = timer
         self.duration = max(1, int(timer["duration"]))
-        self._full_label = timer["label"]
         self.setObjectName("timerRow")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(9, 6, 8, 7)
         layout.setSpacing(5)
 
-        top = QHBoxLayout()
-        top.setSpacing(6)
-        self.label = QLabel()
-        self.label.setToolTip(self._full_label)
-        fm = QFontMetrics(self.label.font())
-        self.label.setText(fm.elidedText(self._full_label, Qt.ElideMiddle, WINDOW_WIDTH - 90))
+        # 任务名: 完整显示, 放不下自动换行
+        self.label = QLabel(_wrappable(timer["label"]))
+        self.label.setWordWrap(True)
+        self.label.setToolTip(timer["label"])
+        layout.addWidget(self.label)
+
+        bottom = QHBoxLayout()
+        bottom.setSpacing(6)
+
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        self.bar.setTextVisible(False)
 
         self.remaining = QLabel("--:--")
         self.remaining.setFont(QFont("Menlo", 12))
         self.remaining.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        plus_btn = QPushButton("＋1")
+        plus_btn.setObjectName("mini")
+        plus_btn.setFixedWidth(28)
+        plus_btn.setToolTip("加 1 分钟")
+        plus_btn.clicked.connect(lambda: on_extend(timer, 60))
 
         cancel_btn = QPushButton("✕")
         cancel_btn.setObjectName("ghost")
@@ -254,15 +287,14 @@ class TimerRow(QFrame):
         cancel_btn.setToolTip("取消该倒计时")
         cancel_btn.clicked.connect(lambda: on_cancel(timer))
 
-        top.addWidget(self.label, 1)
-        top.addWidget(self.remaining)
-        top.addWidget(cancel_btn)
-        layout.addLayout(top)
+        bottom.addWidget(self.bar, 1)
+        bottom.addWidget(self.remaining)
+        bottom.addWidget(plus_btn)
+        bottom.addWidget(cancel_btn)
+        layout.addLayout(bottom)
 
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 1000)
-        self.bar.setTextVisible(False)
-        layout.addWidget(self.bar)
+    def set_duration(self, seconds: float):
+        self.duration = max(1, int(seconds))
 
     def update_remaining(self, seconds: float):
         self.remaining.setText(fmt_remaining(seconds))
@@ -459,12 +491,21 @@ class MultiTimer(QWidget):
         self._persist()
 
     def _add_timer_row(self, timer: dict):
-        row = TimerRow(timer, self._cancel_timer)
+        row = TimerRow(timer, self._cancel_timer, self._extend_timer)
         timer["row"] = row
         self.timers.append(timer)
         self.list_layout.addWidget(row)
         row.update_remaining(timer["end_ts"] - time.time())
         self._update_caption()
+
+    def _extend_timer(self, timer: dict, seconds: int):
+        timer["end_ts"] += seconds
+        timer["duration"] = int(timer.get("duration", 0)) + seconds
+        row = timer.get("row")
+        if row:
+            row.set_duration(timer["duration"])
+            row.update_remaining(timer["end_ts"] - time.time())
+        self._persist()
 
     def _cancel_timer(self, timer: dict):
         self._remove_timer(timer)

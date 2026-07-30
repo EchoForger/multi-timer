@@ -12,3 +12,4 @@ dist/
 
 # macOS
 .DS_Store
+.comate

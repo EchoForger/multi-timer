@@ -8,6 +8,7 @@ dist/
 
 # 打包/运行产物
 .preview.png
+.comate_build.log
 
 # macOS
 .DS_Store

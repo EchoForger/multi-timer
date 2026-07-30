@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""MultiTimer - 多路倒计时小工具
+"""MultiTimer - 多路倒计时小工具 (macOS 菜单栏应用)
 
 特性:
-- GUI (PySide6), 窗口置顶, 随时可见
+- 常驻 macOS 菜单栏 (顶部工具栏), 点击图标弹出小面板, 不在 Dock 显示
 - 输入 label + 点击预设时间即开始一个倒计时, 可同时跑多个
 - 预设 (1min / 5min ...) 可自行增删改, 本地持久化
 - 倒计时结束发送 macOS 通知 (osascript), 无声音
@@ -17,14 +17,15 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtCore import Qt, QTimer, QEvent, Signal
+from PySide6.QtGui import QFont, QFontMetrics, QIcon, QPixmap, QPainter, QPen, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -49,7 +51,8 @@ DEFAULT_PRESETS = [
 
 STYLE = """
 QWidget { font-size: 12px; color: #2b2b30; }
-#Card { background: #fbfbfd; }
+#Card { background: #fbfbfd; border-radius: 12px; }
+#title { color: #6a6a70; font-weight: 600; }
 QScrollArea { background: transparent; border: none; }
 QScrollArea > QWidget > QWidget { background: transparent; }
 #timerRow { background: #ffffff; border: 1px solid #ececf0; border-radius: 8px; }
@@ -277,21 +280,51 @@ class TimerRow(QFrame):
 # 主窗口
 # ---------------------------------------------------------------------------
 class MultiTimer(QWidget):
+    request_quit = Signal()
+
     def __init__(self):
         super().__init__()
         state = load_state()
         self.presets = state["presets"]
         self.timers = []  # {id, label, end_ts, duration, row}
+        self._hidden_at = 0.0
 
         self.setWindowTitle(APP_NAME)
-        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-        self.setObjectName("Card")
+        # 无边框悬浮面板 (菜单栏弹出), 不进 Dock/任务栏
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
         self.setStyleSheet(STYLE)
-        self.setFixedWidth(WINDOW_WIDTH)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 12, 14, 16)  # 给投影留白
+
+        card = QFrame()
+        card.setObjectName("Card")
+        card.setFixedWidth(WINDOW_WIDTH)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 6)
+        shadow.setColor(QColor(0, 0, 0, 70))
+        card.setGraphicsEffect(shadow)
+        outer.addWidget(card)
+
+        root = QVBoxLayout(card)
+        root.setContentsMargins(12, 10, 12, 12)
         root.setSpacing(7)
+
+        # 头部: 标题 + 退出
+        header = QHBoxLayout()
+        title = QLabel("MultiTimer")
+        title.setObjectName("title")
+        quit_btn = QPushButton("⏻")
+        quit_btn.setObjectName("ghost")
+        quit_btn.setFixedWidth(20)
+        quit_btn.setToolTip("退出 MultiTimer")
+        quit_btn.clicked.connect(self.request_quit)
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(quit_btn)
+        root.addLayout(header)
 
         # 输入区
         self.label_input = QLineEdit()
@@ -474,18 +507,109 @@ class MultiTimer(QWidget):
     def _persist(self):
         save_state(self.presets, self.timers)
 
+    # -- 弹出面板行为 ------------------------------------------------------
+    def hideEvent(self, event):
+        self._hidden_at = time.time()
+        super().hideEvent(event)
+
+    def changeEvent(self, event):
+        # 面板失去激活 (点了别处或切换到其他 App) 时自动收起
+        if event.type() == QEvent.ActivationChange and not self.isActiveWindow():
+            QTimer.singleShot(120, self._maybe_hide)
+        super().changeEvent(event)
+
+    def _maybe_hide(self):
+        if not self.isVisible() or self.isActiveWindow():
+            return
+        # 正在弹出预设编辑框/下拉时不要收起
+        if QApplication.activeModalWidget() or QApplication.activePopupWidget():
+            return
+        self.hide()
+
+
+def make_tray_icon() -> QIcon:
+    """画一个简单的闹钟图标, 作为菜单栏模板图 (自动适配深/浅色)。"""
+    size = 44
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    pen = QPen(QColor(0, 0, 0))
+    pen.setWidthF(4.0)
+    pen.setCapStyle(Qt.RoundCap)
+    p.setPen(pen)
+    cx, cy = 22, 24
+    p.drawEllipse(7, 9, 30, 30)          # 表盘
+    p.drawLine(cx, cy, cx, 15)           # 分针
+    p.drawLine(cx, cy, 31, cy)           # 时针
+    p.drawLine(cx - 5, 5, cx - 1, 9)     # 左把手
+    p.drawLine(cx + 5, 5, cx + 1, 9)     # 右把手
+    p.end()
+    icon = QIcon(pm)
+    icon.setIsMask(True)
+    return icon
+
+
+class TrayApp:
+    """菜单栏图标 + 悬浮面板的控制器。"""
+
+    def __init__(self, app: QApplication):
+        self.app = app
+        self.panel = MultiTimer()
+        self.panel.request_quit.connect(self.quit)
+
+        self.tray = QSystemTrayIcon(make_tray_icon(), app)
+        self.tray.setToolTip(APP_NAME)
+        self.tray.activated.connect(self._on_activated)
+        self.tray.show()
+
+    def _on_activated(self, reason):
+        if reason in (
+            QSystemTrayIcon.Trigger,
+            QSystemTrayIcon.DoubleClick,
+            QSystemTrayIcon.Context,
+        ):
+            self.toggle()
+
+    def toggle(self):
+        if self.panel.isVisible():
+            self.panel.hide()
+            return
+        # 点击菜单栏图标收起面板时会先触发一次隐藏, 这里避免立刻又弹出
+        if time.time() - self.panel._hidden_at < 0.25:
+            return
+        self._show_panel()
+
+    def _show_panel(self):
+        self.panel.adjustSize()
+        screen = self.app.primaryScreen().availableGeometry()
+        w = self.panel.sizeHint().width() or self.panel.width()
+        geo = self.tray.geometry()
+        if geo.width():
+            x = geo.center().x() - w // 2
+            y = geo.bottom() + 2
+        else:  # 拿不到图标位置时退到右上角
+            x = screen.right() - w - 20
+            y = screen.top() + 8
+        x = max(screen.left() + 6, min(x, screen.right() - w - 6))
+        self.panel.move(x, y)
+        self.panel.show()
+        self.panel.raise_()
+        self.panel.activateWindow()
+        self.panel.label_input.setFocus()
+
+    def quit(self):
+        self.panel._persist()
+        self.tray.hide()
+        self.app.quit()
+
 
 def main():
     app = QApplication([])
     app.setApplicationName(APP_NAME)
-    win = MultiTimer()
-    win.show()
-    # 放到桌面右下角
-    area = app.primaryScreen().availableGeometry()
-    frame = win.frameGeometry()
-    win.move(area.right() - frame.width() - 20, area.bottom() - frame.height() - 20)
-    win.raise_()
-    win.activateWindow()
+    app.setQuitOnLastWindowClosed(False)  # 关掉面板不退出, 常驻菜单栏
+    tray = TrayApp(app)
+    app.tray_app = tray  # 保持引用, 防止被回收
     app.exec()
 
 

@@ -26,6 +26,8 @@ from AppKit import (
     NSApplicationActivationPolicyAccessory,
     NSStatusBar,
     NSVariableStatusItemLength,
+    NSMenu,
+    NSMenuItem,
     NSImage,
     NSPopover,
     NSPopoverBehaviorTransient,
@@ -194,6 +196,7 @@ class MultiTimerApp(NSObject):
         self.timers = []          # dict: id/label/end_ts/duration/view/name/progress/actions
         self._retain = []         # 全局 target 保活
         self._closed_at = 0.0
+        self._build_main_menu()
         self._build_status_item()
         self._build_popover()
         for t in state["timers"]:
@@ -201,6 +204,27 @@ class MultiTimerApp(NSObject):
         self._update_size()
         self._start_ticker()
         return self
+
+    # -- 主菜单 (让 ⌘C/⌘V/⌘X/⌘A 能路由到输入框) -------------------------
+    def _build_main_menu(self):
+        main = NSMenu.alloc().init()
+        edit_item = NSMenuItem.alloc().init()
+        main.addItem_(edit_item)
+        edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+        edit_item.setSubmenu_(edit_menu)
+
+        def add(title, selector, key):
+            it = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, selector, key)
+            edit_menu.addItem_(it)
+
+        add("Undo", "undo:", "z")
+        add("Redo", "redo:", "Z")
+        edit_menu.addItem_(NSMenuItem.separatorItem())
+        add("Cut", "cut:", "x")
+        add("Copy", "copy:", "c")
+        add("Paste", "paste:", "v")
+        add("Select All", "selectAll:", "a")
+        NSApp.setMainMenu_(main)
 
     # -- 菜单栏图标 --------------------------------------------------------
     def _build_status_item(self):

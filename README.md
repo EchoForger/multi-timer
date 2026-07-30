@@ -5,6 +5,7 @@
 [![macOS](https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Website](https://img.shields.io/badge/website-multitimer-F45D2D)](https://echoforger.github.io/multi-timer/)
 
 MultiTimer 常驻菜单栏，不占用 Dock 空间。输入任务名称并选择一个时间，即可同时启动多个倒计时；所有界面都使用 AppKit 原生组件，会自动跟随系统的浅色或深色外观。
 

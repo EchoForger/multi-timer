@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f7f4ee">
+    <meta name="description" content="MultiTimer 是一款轻量、原生的 macOS 菜单栏多任务倒计时工具。">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="MultiTimer — 一个菜单栏，装下所有倒计时">
+    <meta property="og:description" content="多任务并行、原生通知、状态恢复。轻量而专注的 macOS 菜单栏计时器。">
+    <meta property="og:url" content="https://echoforger.github.io/multi-timer/">
+    <meta property="og:image" content="https://echoforger.github.io/multi-timer/og.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <title>MultiTimer — macOS 菜单栏多任务倒计时</title>
+    <script>
+      (() => {
+        const saved = localStorage.getItem("multitimer-theme");
+        const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = saved || (systemDark ? "dark" : "light");
+      })();
+    </script>
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+
+    <header class="site-header">
+      <nav class="nav shell" aria-label="主导航">
+        <a class="brand" href="#top" aria-label="MultiTimer 首页">
+          <span class="timer-mark" aria-hidden="true"><span></span></span>
+          <span>MultiTimer</span>
+        </a>
+
+        <div class="nav-links">
+          <a href="#features">特性</a>
+          <a href="#workflow">使用方式</a>
+          <a href="#install">安装</a>
+        </div>
+
+        <div class="nav-actions">
+          <button class="theme-toggle" type="button" aria-label="切换深浅主题" title="切换深浅主题">
+            <span class="theme-icon" aria-hidden="true">◐</span>
+          </button>
+          <a class="nav-github" href="https://github.com/EchoForger/multi-timer" target="_blank" rel="noreferrer">
+            GitHub
+            <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero shell" id="top">
+        <div class="hero-copy reveal">
+          <div class="eyebrow"><span></span> 专为 macOS 打造</div>
+          <h1>让每个倒计时，<br><em>彼此独立。</em></h1>
+          <p class="hero-lede">在菜单栏里同时管理工作、休息和生活节奏。无需打开窗口，不打断当前任务，需要时一眼即见。</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#install">开始使用 <span aria-hidden="true">↓</span></a>
+            <a class="button button-quiet" href="https://github.com/EchoForger/multi-timer" target="_blank" rel="noreferrer">查看源代码 <span aria-hidden="true">↗</span></a>
+          </div>
+          <ul class="hero-facts" aria-label="项目特点">
+            <li><span class="fact-dot"></span>原生 AppKit</li>
+            <li><span class="fact-dot"></span>完全本地</li>
+            <li><span class="fact-dot"></span>MIT 开源</li>
+          </ul>
+        </div>
+
+        <div class="hero-visual reveal" aria-label="MultiTimer 应用界面预览">
+          <div class="visual-glow" aria-hidden="true"></div>
+          <div class="screenshot-wrap">
+            <div class="menu-bar-hint" aria-hidden="true">
+              <span>9:41</span>
+              <span class="menu-icons">⌁ &nbsp;◉&nbsp; ⏱</span>
+            </div>
+            <img
+              class="product-shot"
+              src="light.png"
+              data-light-src="light.png"
+              data-dark-src="dark.png"
+              alt="MultiTimer 同时运行两个倒计时的应用界面"
+              width="720"
+              height="698"
+            >
+          </div>
+          <div class="floating-note note-one" aria-hidden="true"><b>+10</b><span>随时延长</span></div>
+          <div class="floating-note note-two" aria-hidden="true"><span class="pulse"></span><b>2 个任务进行中</b></div>
+        </div>
+      </section>
+
+      <section class="trust-strip" aria-label="核心能力">
+        <div class="shell trust-grid">
+          <div><strong>∞</strong><span>并行倒计时</span></div>
+          <div><strong>0</strong><span>账户与遥测</span></div>
+          <div><strong>1</strong><span>个菜单栏入口</span></div>
+          <div><strong>100%</strong><span>本地状态</span></div>
+        </div>
+      </section>
+
+      <section class="section shell" id="features">
+        <div class="section-heading reveal">
+          <div class="eyebrow"><span></span> 不多不少，刚刚好</div>
+          <h2>一个菜单栏，<br>装下所有节奏。</h2>
+          <p>没有复杂项目管理，也没有多余数据面板。MultiTimer 只把计时这件事做好。</p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature-card feature-primary reveal">
+            <div class="feature-icon icon-stack" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div>
+              <span class="card-kicker">MULTI-TASK</span>
+              <h3>多个任务，各自计时</h3>
+              <p>会议、渲染、泡茶或番茄钟可以同时运行。每项任务都有独立进度和快捷操作。</p>
+            </div>
+            <div class="timer-demo" aria-hidden="true">
+              <div><span>深度工作</span><b>24:18</b><i style="--progress: 68%"></i></div>
+              <div><span>烤箱</span><b>08:42</b><i style="--progress: 41%"></i></div>
+              <div><span>短休息</span><b>03:20</b><i style="--progress: 77%"></i></div>
+            </div>
+          </article>
+
+          <article class="feature-card reveal">
+            <div class="feature-icon icon-bell" aria-hidden="true"><i></i></div>
+            <span class="card-kicker">NATIVE</span>
+            <h3>像系统自带的一样自然</h3>
+            <p>原生毛玻璃面板、系统通知、自动深浅主题。不在 Dock 占位置，点击别处即收起。</p>
+          </article>
+
+          <article class="feature-card reveal">
+            <div class="feature-icon icon-shield" aria-hidden="true"><i>✓</i></div>
+            <span class="card-kicker">PRIVATE</span>
+            <h3>你的时间，只留在本机</h3>
+            <p>无需注册，没有联网服务和遥测。预设及进行中的任务只保存在你的 Mac 上。</p>
+          </article>
+
+          <article class="feature-card feature-wide reveal">
+            <div class="feature-copy">
+              <div class="feature-icon icon-preset" aria-hidden="true"><i>5</i></div>
+              <span class="card-kicker">FLEXIBLE</span>
+              <h3>按你的节奏设置</h3>
+              <p>编辑常用预设，输入任意分钟数，或在运行途中增加 1、10、60 分钟。改变计划，不必重新开始。</p>
+            </div>
+            <div class="preset-demo" aria-hidden="true">
+              <button tabindex="-1">1min</button>
+              <button tabindex="-1">5min</button>
+              <button tabindex="-1">10min</button>
+              <button tabindex="-1">25min</button>
+              <button tabindex="-1">90min</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="workflow-section" id="workflow">
+        <div class="shell">
+          <div class="section-heading compact reveal">
+            <div class="eyebrow"><span></span> 三步开始</div>
+            <h2>从想法到倒计时，<br>只需几秒。</h2>
+          </div>
+
+          <ol class="workflow-list">
+            <li class="reveal">
+              <span class="step-number">01</span>
+              <div class="step-icon" aria-hidden="true">Aa</div>
+              <h3>写下任务</h3>
+              <p>输入一个容易辨认的名称；留空也可以，MultiTimer 会自动命名。</p>
+            </li>
+            <li class="reveal">
+              <span class="step-number">02</span>
+              <div class="step-icon step-play" aria-hidden="true">▶</div>
+              <h3>选择时长</h3>
+              <p>点击预设立即开始，或输入自定义分钟数。新的任务不会影响正在运行的计时。</p>
+            </li>
+            <li class="reveal">
+              <span class="step-number">03</span>
+              <div class="step-icon step-check" aria-hidden="true">✓</div>
+              <h3>收到提醒</h3>
+              <p>时间到后使用系统通知处理任务，也可以返回菜单栏重新计时。</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="install-section shell" id="install">
+        <div class="install-card reveal">
+          <div class="install-copy">
+            <div class="eyebrow light"><span></span> 开源，自由掌控</div>
+            <h2>把时间，<br>留给重要的事。</h2>
+            <p>MultiTimer 基于 Python、PyObjC 与 AppKit 构建。克隆仓库即可从源码运行，也可以打包成独立的 macOS App。</p>
+            <div class="install-actions">
+              <a class="button button-white" href="https://github.com/EchoForger/multi-timer#快速开始" target="_blank" rel="noreferrer">查看安装指南 <span aria-hidden="true">↗</span></a>
+              <a class="text-link" href="https://github.com/EchoForger/multi-timer/blob/master/LICENSE" target="_blank" rel="noreferrer">MIT License</a>
+            </div>
+          </div>
+
+          <div class="terminal" aria-label="从源码安装命令">
+            <div class="terminal-top">
+              <div class="terminal-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+              <span>Terminal</span>
+              <button class="copy-button" type="button" data-copy="git clone https://github.com/EchoForger/multi-timer.git&#10;cd multi-timer&#10;python3 -m pip install .&#10;multitimer" aria-label="复制安装命令">复制</button>
+            </div>
+            <pre><code><span class="prompt">$</span> git clone https://github.com/EchoForger/multi-timer.git
+<span class="prompt">$</span> cd multi-timer
+<span class="prompt">$</span> python3 -m pip install .
+<span class="prompt">$</span> multitimer<span class="cursor" aria-hidden="true"></span></code></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <a class="brand" href="#top" aria-label="返回顶部">
+          <span class="timer-mark" aria-hidden="true"><span></span></span>
+          <span>MultiTimer</span>
+        </a>
+        <p>为专注而生，开源于 GitHub。</p>
+        <div class="footer-links">
+          <a href="https://github.com/EchoForger/multi-timer" target="_blank" rel="noreferrer">GitHub</a>
+          <a href="https://github.com/EchoForger/multi-timer/issues" target="_blank" rel="noreferrer">Issues</a>
+          <a href="https://github.com/EchoForger/multi-timer/blob/master/LICENSE" target="_blank" rel="noreferrer">License</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

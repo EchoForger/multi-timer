@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multitimer"
+version = "0.1.0"
+description = "多路倒计时小工具，带 GUI、窗口置顶与静音 macOS 通知"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "wuhaonan" }]
+dependencies = ["PySide6>=6.5"]
+
+[project.scripts]
+multitimer = "multitimer:main"
+
+[tool.setuptools]
+py-modules = ["multitimer"]

@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# 打包/运行产物
+.preview.png
+
+# macOS
+.DS_Store

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "multitimer"
-version = "0.1.0"
-description = "多路倒计时小工具，带 GUI、窗口置顶与静音 macOS 通知"
+version = "0.2.0"
+description = "一个轻巧、原生的 macOS 多路菜单栏倒计时器"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -13,6 +13,7 @@ authors = [{ name = "wuhaonan" }]
 dependencies = [
     "pyobjc-core>=10",
     "pyobjc-framework-Cocoa>=10",
+    "pyobjc-framework-UserNotifications>=10",
 ]
 
 [project.scripts]

@@ -8,7 +8,10 @@ function applyTheme(theme) {
   root.dataset.theme = theme;
   themeToggle?.setAttribute("aria-pressed", String(theme === "dark"));
   themeToggle?.setAttribute("title", theme === "dark" ? "切换到浅色主题" : "切换到深色主题");
-  themeMeta?.setAttribute("content", theme === "dark" ? "#11110f" : "#f7f4ee");
+  themeMeta?.setAttribute("content", theme === "dark" ? "#161326" : "#fff7ea");
+
+  const themeIcon = themeToggle?.querySelector(".theme-icon");
+  if (themeIcon) themeIcon.textContent = theme === "dark" ? "☀" : "◐";
 
   if (productShot) {
     productShot.src = theme === "dark" ? productShot.dataset.darkSrc : productShot.dataset.lightSrc;
@@ -19,14 +22,11 @@ applyTheme(root.dataset.theme || (systemTheme.matches ? "dark" : "light"));
 
 themeToggle?.addEventListener("click", () => {
   const nextTheme = root.dataset.theme === "dark" ? "light" : "dark";
-  localStorage.setItem("multitimer-theme", nextTheme);
   applyTheme(nextTheme);
 });
 
 systemTheme.addEventListener("change", (event) => {
-  if (!localStorage.getItem("multitimer-theme")) {
-    applyTheme(event.matches ? "dark" : "light");
-  }
+  applyTheme(event.matches ? "dark" : "light");
 });
 
 const siteHeader = document.querySelector(".site-header");

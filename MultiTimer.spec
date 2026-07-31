@@ -5,7 +5,7 @@ a = Analysis(
     ['multitimer.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('assets/app-icon.png', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -49,14 +49,14 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='MultiTimer.app',
-    icon=None,
+    icon='assets/MultiTimer.icns',
     bundle_identifier='com.wuhaonan.multitimer',
     info_plist={
         'LSUIElement': True,               # 纯菜单栏应用, 不显示 Dock 图标
         'NSHighResolutionCapable': True,
         'CFBundleName': 'MultiTimer',
         'CFBundleDisplayName': 'MultiTimer',
-        'CFBundleShortVersionString': '0.1.0',
-        'CFBundleVersion': '0.1.0',
+        'CFBundleShortVersionString': '0.2.0',
+        'CFBundleVersion': '0.2.0',
     },
 )

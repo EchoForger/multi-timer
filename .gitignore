@@ -5,6 +5,7 @@ __pycache__/
 build/
 dist/
 .eggs/
+*.dmg
 
 # 打包/运行产物
 .preview.png

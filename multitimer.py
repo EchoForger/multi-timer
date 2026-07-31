@@ -42,7 +42,7 @@ from AppKit import (
     NSApplicationActivationPolicyAccessory,
     NSApplicationActivationPolicyRegular,
     NSStatusBar,
-    NSVariableStatusItemLength,
+    NSSquareStatusItemLength,
     NSMenu,
     NSMenuItem,
     NSImage,
@@ -84,7 +84,7 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 STATE_PATH = Path(
     os.environ.get(
         "MULTITIMER_STATE_PATH",
@@ -310,18 +310,29 @@ class MultiTimerApp(NSObject):
             return None
         state = load_state()
         self.presets = state["presets"]
+        self._initial_timers = state["timers"]
         self.timers = []          # dict: id/label/end_ts/duration/view/name/progress/actions
         self._retain = []         # 全局 target 保活
         self._closed_at = 0.0
+        self._did_finish_launching = False
+        return self
+
+    def applicationDidFinishLaunching_(self, _notification):
+        """Create the status item only after AppKit has finished launching."""
+        if self._did_finish_launching:
+            return
+        self._did_finish_launching = True
         self._setup_notifications()
         self._build_main_menu()
         self._build_status_item()
         self._build_popover()
-        for t in state["timers"]:
+        for t in self._initial_timers:
             self._add_timer_row(t)
+        self._initial_timers = []
         self._update_size()
         self._start_ticker()
-        return self
+        if os.environ.get("MULTITIMER_PREVIEW") == "1":
+            AppHelper.callAfter(self._show_preview_window)
 
     # -- 主菜单 (让 ⌘C/⌘V/⌘X/⌘A 能路由到输入框) -------------------------
     def _build_main_menu(self):
@@ -347,8 +358,11 @@ class MultiTimerApp(NSObject):
     # -- 菜单栏图标 --------------------------------------------------------
     def _build_status_item(self):
         bar = NSStatusBar.systemStatusBar()
-        self.status_item = bar.statusItemWithLength_(NSVariableStatusItemLength)
+        self.status_item = bar.statusItemWithLength_(NSSquareStatusItemLength)
+        if self.status_item.respondsToSelector_("setVisible:"):
+            self.status_item.setVisible_(True)
         btn = self.status_item.button()
+        btn.setToolTip_(APP_NAME)
         img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("timer", APP_NAME)
         if img is None:
             img = NSImage.imageNamed_(NSImageNameStatusAvailable)
@@ -863,6 +877,10 @@ class MultiTimerApp(NSObject):
         self._persist()
         NSApp.terminate_(None)
 
+    def applicationWillTerminate_(self, _notification):
+        if self._did_finish_launching:
+            self._persist()
+
 
 def main():
     app = NSApplication.sharedApplication()
@@ -877,8 +895,6 @@ def main():
     app.setDelegate_(delegate)
     global _APP_DELEGATE
     _APP_DELEGATE = delegate  # 保活
-    if preview:
-        AppHelper.callAfter(delegate._show_preview_window)
     AppHelper.runEventLoop(installInterrupt=True)
 
 

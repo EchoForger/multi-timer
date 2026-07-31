@@ -84,7 +84,8 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
+STATUS_ITEM_AUTOSAVE_NAME = "io.github.echoforger.multitimer.main"
 STATE_PATH = Path(
     os.environ.get(
         "MULTITIMER_STATE_PATH",
@@ -359,8 +360,8 @@ class MultiTimerApp(NSObject):
     def _build_status_item(self):
         bar = NSStatusBar.systemStatusBar()
         self.status_item = bar.statusItemWithLength_(NSSquareStatusItemLength)
-        if self.status_item.respondsToSelector_("setVisible:"):
-            self.status_item.setVisible_(True)
+        if self.status_item.respondsToSelector_("setAutosaveName:"):
+            self.status_item.setAutosaveName_(STATUS_ITEM_AUTOSAVE_NAME)
         btn = self.status_item.button()
         btn.setToolTip_(APP_NAME)
         img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("timer", APP_NAME)
@@ -375,6 +376,8 @@ class MultiTimerApp(NSObject):
         self._retain.append(toggle)
         btn.setTarget_(toggle)
         btn.setAction_("invoke:")
+        if self.status_item.respondsToSelector_("setVisible:"):
+            self.status_item.setVisible_(True)
 
     # -- 弹出面板 ----------------------------------------------------------
     def _build_popover(self):

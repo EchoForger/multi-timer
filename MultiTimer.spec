@@ -50,13 +50,13 @@ app = BUNDLE(
     coll,
     name='MultiTimer.app',
     icon='assets/MultiTimer.icns',
-    bundle_identifier='com.wuhaonan.multitimer',
+    bundle_identifier='io.github.echoforger.multitimer',
     info_plist={
         'LSUIElement': True,               # 纯菜单栏应用, 不显示 Dock 图标
         'NSHighResolutionCapable': True,
         'CFBundleName': 'MultiTimer',
         'CFBundleDisplayName': 'MultiTimer',
-        'CFBundleShortVersionString': '0.2.1',
-        'CFBundleVersion': '0.2.1',
+        'CFBundleShortVersionString': '0.2.2',
+        'CFBundleVersion': '0.2.2',
     },
 )

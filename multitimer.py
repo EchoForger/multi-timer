@@ -106,7 +106,7 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"
 # macOS 26 can retain a broken Control Center visibility record for a status
 # item even after the app is reinstalled.  Use a fresh, status-bar-specific
 # identity for the production app so upgrades are not tied to that stale entry.
@@ -759,6 +759,10 @@ class MultiTimerApp(NSObject):
         self._start_ticker()
         if os.environ.get("MULTITIMER_PREVIEW") == "1":
             self._show_preview_window()
+        else:
+            # The network work happens on a background thread. A startup check
+            # stays quiet when there is no update or the network is unavailable.
+            self._check_for_updates(automatic=True)
 
     # -- 主菜单 (让 ⌘C/⌘V/⌘X/⌘A 能路由到输入框) -------------------------
     def _build_main_menu(self):
@@ -852,61 +856,62 @@ class MultiTimerApp(NSObject):
         elif response == 1001:
             self._open_url(APP_REPOSITORY)
 
-    def _check_for_updates(self):
+    def _check_for_updates(self, automatic=False):
         if self._update_in_progress:
-            self._show_alert("更新正在进行", "请稍候，MultiTimer 会在完成后通知你。")
+            if not automatic:
+                self._show_alert("更新正在进行", "请稍候，MultiTimer 会在完成后通知你。")
             return
         self._update_in_progress = True
         self.status_item.button().setToolTip_("正在检查 MultiTimer 更新…")
-        threading.Thread(target=self._check_update_worker, daemon=True).start()
+        threading.Thread(target=self._check_update_worker, args=(automatic,), daemon=True).start()
 
-    def _check_update_worker(self):
+    def _check_update_worker(self, automatic):
         try:
             release = _fetch_latest_release()
             source = _installation_source()
         except Exception as exc:
-            AppHelper.callAfter(self._update_failed, f"检查更新失败\n{exc}")
+            if automatic:
+                AppHelper.callAfter(self._automatic_check_failed)
+            else:
+                AppHelper.callAfter(self._update_failed, f"检查更新失败\n{exc}")
             return
-        AppHelper.callAfter(self._present_update, release, source)
+        AppHelper.callAfter(self._present_update, release, source, automatic)
 
-    def _present_update(self, release, source):
+    def _present_update(self, release, source, automatic=False):
         latest = _release_version(release)
         if not latest:
-            self._update_failed("GitHub Release 没有有效的版本号")
+            if automatic:
+                self._automatic_check_failed()
+            else:
+                self._update_failed("GitHub Release 没有有效的版本号")
             return
         if _version_tuple(latest) <= _version_tuple(APP_VERSION):
             self._update_in_progress = False
             self.status_item.button().setToolTip_(APP_NAME)
-            self._show_alert("已是最新版", f"你正在使用 MultiTimer {APP_VERSION}。")
+            if not automatic:
+                self._show_alert("已是最新版", f"你正在使用 MultiTimer {APP_VERSION}。")
             return
 
-        notes = str(release.get("body") or "该版本包含功能改进与问题修复。").strip()
-        if len(notes) > 900:
-            notes = notes[:897] + "…"
         if source == "homebrew":
             self.status_item.button().setToolTip_(f"正在通过 Homebrew 更新到 {latest}…")
             threading.Thread(target=self._brew_update_worker, args=(latest,), daemon=True).start()
             return
         if source == "dmg":
-            self._update_in_progress = False
-            self.status_item.button().setToolTip_(APP_NAME)
-            response = self._show_alert(
-                f"发现 MultiTimer {latest}",
-                f"当前版本：{APP_VERSION}\n\n{notes}\n\n是否下载、校验并安装更新？",
-                ("下载并安装", "稍后"),
-            )
-            if response == 1000:
-                self._update_in_progress = True
-                self.status_item.button().setToolTip_(f"正在安装 MultiTimer {latest}…")
-                threading.Thread(
-                    target=self._dmg_update_worker,
-                    args=(release, latest),
-                    daemon=True,
-                ).start()
+            self.status_item.button().setToolTip_(f"正在安装 MultiTimer {latest}…")
+            threading.Thread(
+                target=self._dmg_update_worker,
+                args=(release, latest),
+                daemon=True,
+            ).start()
             return
 
         self._update_in_progress = False
         self.status_item.button().setToolTip_(APP_NAME)
+        if automatic:
+            return
+        notes = str(release.get("body") or "该版本包含功能改进与问题修复。").strip()
+        if len(notes) > 900:
+            notes = notes[:897] + "…"
         response = self._show_alert(
             f"发现 MultiTimer {latest}",
             f"当前正在开发模式中运行，不会覆盖源码。\n\n{notes}",
@@ -914,6 +919,11 @@ class MultiTimerApp(NSObject):
         )
         if response == 1000:
             self._open_url(str(release.get("html_url") or f"{APP_REPOSITORY}/releases/latest"))
+
+    def _automatic_check_failed(self):
+        """Keep launch-time connectivity failures unobtrusive."""
+        self._update_in_progress = False
+        self.status_item.button().setToolTip_(APP_NAME)
 
     def _brew_update_worker(self, latest):
         try:

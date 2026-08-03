@@ -78,10 +78,10 @@ brew uninstall --cask multi-timer
 
 ## 关于与更新
 
-点击面板右上角的 `ⓘ` 打开“关于 MultiTimer”，可查看当前版本、安装来源、EchoForger 版权与许可信息，也可手动检查更新。
+MultiTimer 每次启动都会通过 GitHub Release 静默检查最新版。点击面板右上角的 `ⓘ` 打开“关于 MultiTimer”，可查看当前版本、安装来源、EchoForger 版权与许可信息，也可手动检查更新。
 
-- Homebrew 安装：检查到新版后，MultiTimer 自动通过 Homebrew 更新，完成后提示重启。
-- DMG 安装：先显示新版本与发布说明；只有在你确认后才会下载、校验 SHA256 并安装。
+- Homebrew 安装：检查到新版后，MultiTimer 在后台通过 Homebrew 更新，完成后提示重启。
+- DMG 安装：检查到新版后，自动下载、校验 SHA256 并替换应用，完成后提示重启。
 - 源码运行：不会覆盖开发目录，只会引导到 GitHub Release 页。
 
 ## 特性

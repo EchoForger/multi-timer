@@ -14,6 +14,7 @@
 
 import json
 import hashlib
+import math
 import os
 import plistlib
 import socket
@@ -82,7 +83,6 @@ from AppKit import (
     NSStackView,
     NSTextField,
     NSButton,
-    NSPopUpButton,
     NSAlert,
     NSBox,
     NSBoxSeparator,
@@ -122,7 +122,7 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 # macOS 26 can retain a broken Control Center visibility record for a status
 # item even after the app is reinstalled.  Use a fresh, status-bar-specific
 # identity for the production app so upgrades are not tied to that stale entry.
@@ -152,7 +152,6 @@ DEFAULT_SETTINGS = {
     "show_remaining": False,
     "show_count": False,
     "sort_by_expiry": True,
-    "language": "system",
 }
 
 STRINGS = {
@@ -168,8 +167,9 @@ STRINGS = {
         "notification_denied": "通知已关闭，计时结束时可能无法提醒。", "open_settings": "打开系统设置",
         "settings_title": "MultiTimer 设置", "launch_at_login": "登录时自动启动",
         "show_remaining": "菜单栏显示最近剩余时间", "show_count": "菜单栏显示计时器数量",
-        "sort_by_expiry": "最近到期优先", "language": "语言", "system_language": "跟随系统",
-        "save": "保存", "cancel": "取消", "restart_language": "语言将在重新启动 MultiTimer 后生效。",
+        "sort_by_expiry": "最近到期优先", "language": "应用语言",
+        "language_detail": "由 macOS 管理。", "open_language_settings": "系统设置…",
+        "back": "返回", "save": "保存", "cancel": "取消",
         "time_up_body": "时间到，点击“已检查”移除", "time_up": "时间到",
         "confirm_finish": "剩余时间将变为零", "confirm_finish_detail": "要立即结束“{name}”吗？",
         "finish_now": "立即结束", "status_hidden": "菜单栏图标没有显示",
@@ -200,8 +200,9 @@ STRINGS = {
         "notification_denied": "Notifications are off, so completed timers may not alert you.", "open_settings": "Open Settings",
         "settings_title": "MultiTimer Settings", "launch_at_login": "Launch at Login",
         "show_remaining": "Show nearest remaining time", "show_count": "Show active timer count",
-        "sort_by_expiry": "Sort by nearest expiry", "language": "Language", "system_language": "Follow System",
-        "save": "Save", "cancel": "Cancel", "restart_language": "The language will change after MultiTimer restarts.",
+        "sort_by_expiry": "Sort by nearest expiry", "language": "App Language",
+        "language_detail": "Managed by macOS.", "open_language_settings": "System Settings…",
+        "back": "Back", "save": "Save", "cancel": "Cancel",
         "time_up_body": "Time is up. Click Done to remove it.", "time_up": "Time's up",
         "confirm_finish": "The remaining time will reach zero", "confirm_finish_detail": "Finish “{name}” now?",
         "finish_now": "Finish Now", "status_hidden": "Menu bar icon is not visible",
@@ -234,8 +235,9 @@ def _system_language() -> str:
 
 
 def _language_for_settings(settings: dict) -> str:
-    value = str((settings or {}).get("language", "system"))
-    return _system_language() if value == "system" else (value if value in STRINGS else "en")
+    # Per-app language is managed by macOS in Language & Region. NSLocale
+    # reflects that application-specific choice at the next launch.
+    return _system_language()
 
 
 def _parse_multitimer_url(value: str) -> dict:
@@ -630,6 +632,13 @@ def fmt_remaining(seconds: float) -> str:
     if h:
         return f"{h:d}:{m:02d}:{s:02d}"
     return f"{m:02d}:{s:02d}"
+
+
+def fmt_status_remaining(seconds: float) -> str:
+    """Format menu-bar time without seconds using a stable HH:MM width."""
+    total_minutes = max(0, int(math.ceil(max(0.0, float(seconds)) / 60.0)))
+    hours, minutes = divmod(total_minutes, 60)
+    return f"{hours:02d}:{minutes:02d}"
 
 
 def fmt_duration(seconds: float) -> str:
@@ -1064,6 +1073,7 @@ class MultiTimerApp(NSObject):
         self._did_finish_launching = False
         self._update_in_progress = False
         self._control_server = None
+        self._status_signature = None
         return self
 
     @objc.python_method
@@ -1122,13 +1132,17 @@ class MultiTimerApp(NSObject):
     # -- 菜单栏图标 --------------------------------------------------------
     def _build_status_item(self):
         bar = NSStatusBar.systemStatusBar()
-        self.status_item = bar.statusItemWithLength_(NSVariableStatusItemLength)
+        wants_summary = self.settings.get("show_remaining") or self.settings.get("show_count")
+        initial_length = NSVariableStatusItemLength if wants_summary else NSSquareStatusItemLength
+        self.status_item = bar.statusItemWithLength_(initial_length)
+        self._status_signature = None
         # Do not set an autosave name here. On recent macOS versions, launching
         # an installed build and a development build with the same bundle ID can
         # make Control Center classify the duplicate autosaved item as blocked,
         # leaving the application alive without a visible menu-bar icon.
         btn = self.status_item.button()
         btn.setToolTip_(APP_NAME)
+        btn.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(12, NSFontWeightMedium))
         img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("timer", APP_NAME)
         if img is None:
             img = NSImage.imageNamed_(NSImageNameStatusAvailable)
@@ -1155,14 +1169,18 @@ class MultiTimerApp(NSObject):
             countdowns = [t for t in active if t.get("kind", "countdown") == "countdown"]
             if countdowns:
                 nearest = min(countdowns, key=lambda item: self._timer_remaining(item))
-                parts.append(fmt_remaining(self._timer_remaining(nearest)))
+                parts.append(fmt_status_remaining(self._timer_remaining(nearest)))
         if self.settings.get("show_count"):
             parts.append(str(len(active)))
         title = " · ".join(parts)
+        signature = (title, bool(title))
+        if signature == self._status_signature:
+            return
         button = self.status_item.button()
         button.setTitle_(title)
         button.setImagePosition_(NSImageLeft if title else NSImageOnly)
         self.status_item.setLength_(NSVariableStatusItemLength if title else NSSquareStatusItemLength)
+        self._status_signature = signature
 
     def _verify_status_item(self):
         item = getattr(self, "status_item", None)
@@ -1304,59 +1322,145 @@ class MultiTimerApp(NSObject):
             return None
 
     def _show_settings(self):
-        alert = NSAlert.alloc().init()
-        alert.setMessageText_(self.tr("settings_title"))
-        alert.addButtonWithTitle_(self.tr("save"))
-        alert.addButtonWithTitle_(self.tr("cancel"))
-        view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 330, 150))
+        if not getattr(self, "_settings_vc", None):
+            self._build_settings_view()
+        self._refresh_settings_controls()
+        self.popover.setContentViewController_(self._settings_vc)
+        self._fit_popover_to(self._settings_content_view)
 
-        def checkbox(title, y, checked):
-            control = NSButton.alloc().initWithFrame_(NSMakeRect(0, y, 330, 24))
+    def _build_settings_view(self):
+        content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, PANEL_WIDTH + 20, 190))
+        root = _vstack(8)
+        root.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        content.addSubview_(root)
+        root.leadingAnchor().constraintEqualToAnchor_constant_(content.leadingAnchor(), 10).setActive_(True)
+        root.trailingAnchor().constraintEqualToAnchor_constant_(content.trailingAnchor(), -10).setActive_(True)
+        root.topAnchor().constraintEqualToAnchor_constant_(content.topAnchor(), 9).setActive_(True)
+        root.bottomAnchor().constraintEqualToAnchor_constant_(content.bottomAnchor(), -9).setActive_(True)
+        root.widthAnchor().constraintEqualToConstant_(PANEL_WIDTH).setActive_(True)
+
+        header = _hstack(6)
+        back = _button("‹", lambda s: self._show_main_view(), self._retain, small=True, quiet=True)
+        back.setToolTip_(self.tr("back"))
+        back.widthAnchor().constraintEqualToConstant_(28).setActive_(True)
+        header.addArrangedSubview_(back)
+        title = NSTextField.labelWithString_(self.tr("settings_title"))
+        title.setFont_(NSFont.systemFontOfSize_weight_(13.5, NSFontWeightSemibold))
+        header.addArrangedSubview_(title)
+        header_spacer = NSView.alloc().init()
+        header.addArrangedSubview_(header_spacer)
+        header_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
+        root.addArrangedSubview_(header)
+        header.leadingAnchor().constraintEqualToAnchor_(root.leadingAnchor()).setActive_(True)
+        header.trailingAnchor().constraintEqualToAnchor_(root.trailingAnchor()).setActive_(True)
+
+        separator = NSBox.alloc().init()
+        separator.setBoxType_(NSBoxSeparator)
+        root.addArrangedSubview_(separator)
+        separator.leadingAnchor().constraintEqualToAnchor_(root.leadingAnchor()).setActive_(True)
+        separator.trailingAnchor().constraintEqualToAnchor_(root.trailingAnchor()).setActive_(True)
+
+        self._setting_controls = {}
+
+        def add_switch(key, title, callback):
+            control = NSButton.alloc().init()
             control.setButtonType_(NSSwitchButton)
             control.setTitle_(title)
-            control.setState_(NSControlStateValueOn if checked else NSControlStateValueOff)
-            view.addSubview_(control)
-            return control
+            control.setFont_(NSFont.systemFontOfSize_(12))
+            action = _Action.alloc().initWithCallback_(callback)
+            self._retain.append(action)
+            control.setTarget_(action)
+            control.setAction_("invoke:")
+            root.addArrangedSubview_(control)
+            control.leadingAnchor().constraintEqualToAnchor_(root.leadingAnchor()).setActive_(True)
+            control.trailingAnchor().constraintEqualToAnchor_(root.trailingAnchor()).setActive_(True)
+            self._setting_controls[key] = control
 
+        add_switch("launch_at_login", self.tr("launch_at_login"), self._login_setting_changed)
+        add_switch(
+            "show_remaining", self.tr("show_remaining"),
+            lambda sender: self._boolean_setting_changed("show_remaining", sender),
+        )
+        add_switch(
+            "show_count", self.tr("show_count"),
+            lambda sender: self._boolean_setting_changed("show_count", sender),
+        )
+        add_switch(
+            "sort_by_expiry", self.tr("sort_by_expiry"),
+            lambda sender: self._boolean_setting_changed("sort_by_expiry", sender),
+        )
+
+        language_card = _CardView.alloc().init()
+        language_row = _hstack(6)
+        language_text = _vstack(1)
+        language_title = NSTextField.labelWithString_(self.tr("language"))
+        language_title.setFont_(NSFont.systemFontOfSize_weight_(11.5, NSFontWeightMedium))
+        language_detail = NSTextField.wrappingLabelWithString_(self.tr("language_detail"))
+        language_detail.setFont_(NSFont.systemFontOfSize_(10))
+        language_detail.setTextColor_(NSColor.secondaryLabelColor())
+        language_text.addArrangedSubview_(language_title)
+        language_text.addArrangedSubview_(language_detail)
+        language_row.addArrangedSubview_(language_text)
+        language_spacer = NSView.alloc().init()
+        language_row.addArrangedSubview_(language_spacer)
+        language_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
+        language_button = _button(
+            self.tr("open_language_settings"), lambda s: self._open_language_settings(),
+            self._retain, small=True,
+        )
+        language_row.addArrangedSubview_(language_button)
+        _embed_with_insets(language_card, language_row, top=6, right=7, bottom=6, left=8)
+        root.addArrangedSubview_(language_card)
+        language_card.leadingAnchor().constraintEqualToAnchor_(root.leadingAnchor()).setActive_(True)
+        language_card.trailingAnchor().constraintEqualToAnchor_(root.trailingAnchor()).setActive_(True)
+
+        vc = NSViewController.alloc().init()
+        vc.setView_(content)
+        self._settings_content_view = content
+        self._settings_vc = vc
+
+    def _refresh_settings_controls(self):
+        controls = self._setting_controls
         service = self._login_service()
         login_enabled = bool(service is not None and int(service.status()) == 1)
-        login = checkbox(self.tr("launch_at_login"), 124, login_enabled)
-        show_remaining = checkbox(self.tr("show_remaining"), 96, self.settings.get("show_remaining"))
-        show_count = checkbox(self.tr("show_count"), 68, self.settings.get("show_count"))
-        sort_by_expiry = checkbox(self.tr("sort_by_expiry"), 40, self.settings.get("sort_by_expiry"))
-        language_label = NSTextField.labelWithString_(self.tr("language"))
-        language_label.setFrame_(NSMakeRect(2, 7, 90, 22))
-        view.addSubview_(language_label)
-        language = NSPopUpButton.alloc().initWithFrame_pullsDown_(NSMakeRect(100, 3, 225, 27), False)
-        language.addItemsWithTitles_([self.tr("system_language"), "简体中文", "English"])
-        language.selectItemAtIndex_({"system": 0, "zh": 1, "en": 2}.get(self.settings.get("language"), 0))
-        view.addSubview_(language)
-        alert.setAccessoryView_(view)
-        if alert.runModal() != 1000:
-            return
+        controls["launch_at_login"].setState_(
+            NSControlStateValueOn if login_enabled else NSControlStateValueOff
+        )
+        for key in ("show_remaining", "show_count", "sort_by_expiry"):
+            controls[key].setState_(
+                NSControlStateValueOn if self.settings.get(key) else NSControlStateValueOff
+            )
 
-        desired_login = login.state() == NSControlStateValueOn
-        if service is not None and desired_login != login_enabled:
-            try:
-                result = service.registerAndReturnError_(None) if desired_login else service.unregisterAndReturnError_(None)
-                ok, error = result if isinstance(result, tuple) else (bool(result), None)
-                if not ok:
-                    raise RuntimeError(str(error or "macOS rejected the login item change"))
-            except Exception as exc:
-                self._show_alert(self.tr("launch_at_login"), str(exc), ("OK",))
-
-        previous_language = self.settings.get("language", "system")
-        self.settings.update({
-            "show_remaining": show_remaining.state() == NSControlStateValueOn,
-            "show_count": show_count.state() == NSControlStateValueOn,
-            "sort_by_expiry": sort_by_expiry.state() == NSControlStateValueOn,
-            "language": ("system", "zh", "en")[language.indexOfSelectedItem()],
-        })
+    def _boolean_setting_changed(self, key, sender):
+        self.settings[key] = sender.state() == NSControlStateValueOn
         self._persist()
-        self._sort_timer_views()
-        self._refresh_status_item()
-        if previous_language != self.settings["language"]:
-            self._show_alert(self.tr("language"), self.tr("restart_language"))
+        if key == "sort_by_expiry":
+            self._sort_timer_views()
+        else:
+            self._refresh_status_item()
+
+    def _login_setting_changed(self, sender):
+        desired = sender.state() == NSControlStateValueOn
+        service = self._login_service()
+        if service is None:
+            sender.setState_(NSControlStateValueOff)
+            self._show_alert(self.tr("launch_at_login"), "SMAppService is unavailable.")
+            return
+        try:
+            result = service.registerAndReturnError_(None) if desired else service.unregisterAndReturnError_(None)
+            ok, error = result if isinstance(result, tuple) else (bool(result), None)
+            if not ok:
+                raise RuntimeError(str(error or "macOS rejected the login item change"))
+        except Exception as exc:
+            sender.setState_(NSControlStateValueOff if desired else NSControlStateValueOn)
+            self._show_alert(self.tr("launch_at_login"), str(exc))
+
+    def _open_language_settings(self):
+        self._open_url("x-apple.systempreferences:com.apple.Localization-Settings.extension")
+
+    def _show_main_view(self):
+        self.popover.setContentViewController_(self._vc)
+        self._fit_popover_to(self.content_view)
 
     def _show_about(self):
         if self.popover.isShown():
@@ -2288,40 +2392,54 @@ class MultiTimerApp(NSObject):
 
     def _show_preview_window(self):
         """Show the production content in a normal window for visual QA only."""
-        self.content_view.layoutSubtreeIfNeeded()
-        size = self.content_view.fittingSize()
+        preview_view = self.content_view
+        if os.environ.get("MULTITIMER_PREVIEW_VIEW") == "settings":
+            if not getattr(self, "_settings_vc", None):
+                self._build_settings_view()
+            self._refresh_settings_controls()
+            preview_view = self._settings_content_view
+        preview_view.layoutSubtreeIfNeeded()
+        size = preview_view.fittingSize()
         frame = NSMakeRect(0, 0, size.width, size.height)
         style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
         window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             frame, style, NSBackingStoreBuffered, False
         )
         window.setTitle_(APP_NAME)
-        window.setContentView_(self.content_view)
+        window.setContentView_(preview_view)
         window.center()
         window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
         self._preview_window = window
         snapshot_path = os.environ.get("MULTITIMER_SNAPSHOT_PATH")
         if snapshot_path:
-            self._save_preview_snapshot(snapshot_path)
+            self._save_preview_snapshot(snapshot_path, preview_view)
 
-    def _save_preview_snapshot(self, snapshot_path):
+    def _save_preview_snapshot(self, snapshot_path, view=None):
         """Render the preview content for website and README screenshots."""
-        self.content_view.setWantsLayer_(True)
-        self.content_view.layer().setBackgroundColor_(NSColor.windowBackgroundColor().CGColor())
-        self.content_view.layoutSubtreeIfNeeded()
-        bounds = self.content_view.bounds()
-        bitmap = self.content_view.bitmapImageRepForCachingDisplayInRect_(bounds)
-        self.content_view.cacheDisplayInRect_toBitmapImageRep_(bounds, bitmap)
+        view = view or self.content_view
+        view.setWantsLayer_(True)
+        view.layer().setBackgroundColor_(NSColor.windowBackgroundColor().CGColor())
+        view.layoutSubtreeIfNeeded()
+        bounds = view.bounds()
+        bitmap = view.bitmapImageRepForCachingDisplayInRect_(bounds)
+        view.cacheDisplayInRect_toBitmapImageRep_(bounds, bitmap)
         data = bitmap.representationUsingType_properties_(NSBitmapImageFileTypePNG, {})
         Path(snapshot_path).write_bytes(bytes(data))
 
     def popoverDidClose_(self, _notification):
         self._closed_at = time.time()
+        if getattr(self, "popover", None) is not None and getattr(self, "_vc", None) is not None:
+            self.popover.setContentViewController_(self._vc)
+            self._fit_popover_to(self.content_view)
 
     def _update_size(self):
-        self.content_view.layoutSubtreeIfNeeded()
-        self.popover.setContentSize_(self.content_view.fittingSize())
+        current = self.popover.contentViewController().view() if getattr(self, "popover", None) else self.content_view
+        self._fit_popover_to(current)
+
+    def _fit_popover_to(self, view):
+        view.layoutSubtreeIfNeeded()
+        self.popover.setContentSize_(view.fittingSize())
 
     def _persist(self):
         save_state(self.presets, self.timers, self._skipped_update, self.settings)

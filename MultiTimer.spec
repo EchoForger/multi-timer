@@ -56,8 +56,10 @@ app = BUNDLE(
         'NSHighResolutionCapable': True,
         'CFBundleName': 'MultiTimer',
         'CFBundleDisplayName': 'MultiTimer',
-        'CFBundleShortVersionString': '0.4.0',
-        'CFBundleVersion': '0.4.0',
+        'CFBundleShortVersionString': '0.4.1',
+        'CFBundleVersion': '0.4.1',
+        'CFBundleDevelopmentRegion': 'en',
+        'CFBundleLocalizations': ['en', 'zh-Hans'],
         'CFBundleURLTypes': [{
             'CFBundleURLName': 'io.github.echoforger.multitimer.url',
             'CFBundleURLSchemes': ['multitimer'],

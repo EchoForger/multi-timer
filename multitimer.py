@@ -3,7 +3,7 @@
 
 使用 AppKit (PyObjC) 原生组件:
 - 常驻菜单栏 NSStatusItem, 点击弹出 NSPopover (系统毛玻璃, 跟随深/浅色)
-- 原生 NSTextField / NSButton / NSProgressIndicator
+- 原生 NSTextField / NSButton，以及跟随系统强调色的轻量进度条
 - 不在 Dock 显示 (ActivationPolicy = Accessory)
 - 输入任务名 + 点预设时间即开始; 可并行多个倒计时
 - 预设可增删改, 本地持久化; 未填任务名时自动使用 "任务 N"
@@ -20,7 +20,7 @@ import uuid
 from pathlib import Path
 
 import objc
-from Foundation import NSObject, NSTimer, NSMakeRect, NSMakeSize
+from Foundation import NSObject, NSTimer, NSMakeRect, NSMakeSize, NSNotificationCenter
 from PyObjCTools import AppHelper
 from UserNotifications import (
     UNUserNotificationCenter,
@@ -58,8 +58,6 @@ from AppKit import (
     NSButton,
     NSBox,
     NSBoxSeparator,
-    NSProgressIndicator,
-    NSProgressIndicatorStyleBar,
     NSColor,
     NSFont,
     NSFontWeightBold,
@@ -81,20 +79,19 @@ from AppKit import (
     NSWindowStyleMaskTitled,
     NSWindowStyleMaskClosable,
     NSBackingStoreBuffered,
+    NSBitmapImageFileTypePNG,
+    NSSystemColorsDidChangeNotification,
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.2.2"
-STATUS_ITEM_AUTOSAVE_NAME = "io.github.echoforger.multitimer.main"
+APP_VERSION = "0.3.0"
 STATE_PATH = Path(
     os.environ.get(
         "MULTITIMER_STATE_PATH",
         str(Path.home() / ".config" / "multitimer" / "state.json"),
     )
 )
-PANEL_WIDTH = 340
-BRAND_CORAL = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.42, 0.29, 1.0)
-BRAND_LIME = NSColor.colorWithSRGBRed_green_blue_alpha_(0.78, 0.95, 0.42, 1.0)
+PANEL_WIDTH = 310
 DEFAULT_PRESETS = [
     {"name": "1min", "seconds": 60},
     {"name": "5min", "seconds": 300},
@@ -181,7 +178,7 @@ class _CardView(NSView):
         if self is None:
             return None
         self.setWantsLayer_(True)
-        self.layer().setCornerRadius_(13.0)
+        self.layer().setCornerRadius_(9.0)
         self.layer().setMasksToBounds_(True)
         self._apply_palette()
         return self
@@ -197,15 +194,16 @@ class _CardView(NSView):
         match = appearance.bestMatchFromAppearancesWithNames_(
             [NSAppearanceNameAqua, NSAppearanceNameDarkAqua]
         )
+        color = NSColor.controlBackgroundColor()
         if match == NSAppearanceNameDarkAqua:
-            color = NSColor.colorWithSRGBRed_green_blue_alpha_(0.14, 0.13, 0.20, 0.92)
+            color = color.colorWithAlphaComponent_(0.72)
         else:
-            color = NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.99, 0.97, 0.96)
+            color = color.colorWithAlphaComponent_(0.82)
         self.layer().setBackgroundColor_(color.CGColor())
 
 
 class _ProgressView(NSView):
-    """Slim branded progress track independent from the system accent color."""
+    """Compact progress bar that follows the macOS system accent color."""
 
     def init(self):
         self = objc.super(_ProgressView, self).init()
@@ -213,18 +211,17 @@ class _ProgressView(NSView):
             return None
         self._value = 0.0
         self.setWantsLayer_(True)
-        self.layer().setCornerRadius_(2.5)
+        self.layer().setCornerRadius_(2.0)
         self.layer().setMasksToBounds_(True)
         self._fill = NSView.alloc().init()
         self._fill.setWantsLayer_(True)
-        self._fill.layer().setBackgroundColor_(BRAND_CORAL.CGColor())
-        self._fill.layer().setCornerRadius_(2.5)
+        self._fill.layer().setCornerRadius_(2.0)
         self.addSubview_(self._fill)
-        self._apply_palette()
+        self.refreshAccent()
         return self
 
     def intrinsicContentSize(self):
-        return NSMakeSize(-1.0, 5.0)
+        return NSMakeSize(-1.0, 4.0)
 
     def setDoubleValue_(self, value):
         self._value = max(0.0, min(1000.0, float(value)))
@@ -238,18 +235,12 @@ class _ProgressView(NSView):
 
     def viewDidChangeEffectiveAppearance(self):
         objc.super(_ProgressView, self).viewDidChangeEffectiveAppearance()
-        self._apply_palette()
+        self.refreshAccent()
 
-    def _apply_palette(self):
-        appearance = self.effectiveAppearance() or NSApp.effectiveAppearance()
-        if appearance is None:
-            return
-        match = appearance.bestMatchFromAppearancesWithNames_(
-            [NSAppearanceNameAqua, NSAppearanceNameDarkAqua]
-        )
-        alpha = 0.18 if match == NSAppearanceNameDarkAqua else 0.10
-        track = NSColor.labelColor().colorWithAlphaComponent_(alpha)
+    def refreshAccent(self):
+        track = NSColor.separatorColor().colorWithAlphaComponent_(0.55)
         self.layer().setBackgroundColor_(track.CGColor())
+        self._fill.layer().setBackgroundColor_(NSColor.controlAccentColor().CGColor())
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +263,7 @@ def _vstack(spacing=8):
 
 def _section_label(text):
     lbl = NSTextField.labelWithString_(text)
-    lbl.setFont_(NSFont.systemFontOfSize_weight_(11, NSFontWeightSemibold))
+    lbl.setFont_(NSFont.systemFontOfSize_weight_(10.5, NSFontWeightSemibold))
     lbl.setTextColor_(NSColor.secondaryLabelColor())
     return lbl
 
@@ -286,9 +277,7 @@ def _button(title, cb, retain, accent=False, small=False, quiet=False):
         btn.setControlSize_(NSControlSizeSmall)
         btn.setFont_(NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
     if accent:
-        btn.setBezelColor_(BRAND_CORAL)
-    elif quiet and btn.respondsToSelector_("setContentTintColor:"):
-        btn.setContentTintColor_(NSColor.secondaryLabelColor())
+        btn.setBezelColor_(NSColor.controlAccentColor())
     return btn
 
 
@@ -327,13 +316,16 @@ class MultiTimerApp(NSObject):
         self._build_main_menu()
         self._build_status_item()
         self._build_popover()
+        NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+            self, "systemColorsDidChange:", NSSystemColorsDidChangeNotification, None
+        )
         for t in self._initial_timers:
             self._add_timer_row(t)
         self._initial_timers = []
         self._update_size()
         self._start_ticker()
         if os.environ.get("MULTITIMER_PREVIEW") == "1":
-            AppHelper.callAfter(self._show_preview_window)
+            self._show_preview_window()
 
     # -- 主菜单 (让 ⌘C/⌘V/⌘X/⌘A 能路由到输入框) -------------------------
     def _build_main_menu(self):
@@ -360,8 +352,10 @@ class MultiTimerApp(NSObject):
     def _build_status_item(self):
         bar = NSStatusBar.systemStatusBar()
         self.status_item = bar.statusItemWithLength_(NSSquareStatusItemLength)
-        if self.status_item.respondsToSelector_("setAutosaveName:"):
-            self.status_item.setAutosaveName_(STATUS_ITEM_AUTOSAVE_NAME)
+        # Do not set an autosave name here. On recent macOS versions, launching
+        # an installed build and a development build with the same bundle ID can
+        # make Control Center classify the duplicate autosaved item as blocked,
+        # leaving the application alive without a visible menu-bar icon.
         btn = self.status_item.button()
         btn.setToolTip_(APP_NAME)
         img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("timer", APP_NAME)
@@ -381,35 +375,35 @@ class MultiTimerApp(NSObject):
 
     # -- 弹出面板 ----------------------------------------------------------
     def _build_popover(self):
-        content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, PANEL_WIDTH + 32, 260))
+        content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, PANEL_WIDTH + 24, 240))
         self.content_view = content
 
-        root = _vstack(12)
+        root = _vstack(8)
         root.setTranslatesAutoresizingMaskIntoConstraints_(False)
         content.addSubview_(root)
         self.root_stack = root
-        root.leadingAnchor().constraintEqualToAnchor_constant_(content.leadingAnchor(), 16).setActive_(True)
-        root.trailingAnchor().constraintEqualToAnchor_constant_(content.trailingAnchor(), -16).setActive_(True)
-        root.topAnchor().constraintEqualToAnchor_constant_(content.topAnchor(), 16).setActive_(True)
-        root.bottomAnchor().constraintEqualToAnchor_constant_(content.bottomAnchor(), -16).setActive_(True)
+        root.leadingAnchor().constraintEqualToAnchor_constant_(content.leadingAnchor(), 12).setActive_(True)
+        root.trailingAnchor().constraintEqualToAnchor_constant_(content.trailingAnchor(), -12).setActive_(True)
+        root.topAnchor().constraintEqualToAnchor_constant_(content.topAnchor(), 12).setActive_(True)
+        root.bottomAnchor().constraintEqualToAnchor_constant_(content.bottomAnchor(), -12).setActive_(True)
         root.widthAnchor().constraintEqualToConstant_(PANEL_WIDTH).setActive_(True)
 
         # 品牌头部
-        header = _hstack(10)
+        header = _hstack(8)
         header.setDistribution_(0)
         icon = NSImage.alloc().initWithContentsOfFile_(str(resource_path("assets/app-icon.png")))
         if icon is not None:
             icon_view = NSImageView.imageViewWithImage_(icon)
             icon_view.setImageScaling_(NSImageScaleProportionallyUpOrDown)
-            icon_view.widthAnchor().constraintEqualToConstant_(38).setActive_(True)
-            icon_view.heightAnchor().constraintEqualToConstant_(38).setActive_(True)
+            icon_view.widthAnchor().constraintEqualToConstant_(30).setActive_(True)
+            icon_view.heightAnchor().constraintEqualToConstant_(30).setActive_(True)
             header.addArrangedSubview_(icon_view)
 
         identity = _vstack(1)
         title = NSTextField.labelWithString_(APP_NAME)
-        title.setFont_(NSFont.systemFontOfSize_weight_(16, NSFontWeightBold))
+        title.setFont_(NSFont.systemFontOfSize_weight_(15, NSFontWeightSemibold))
         subtitle = NSTextField.labelWithString_("多个倒计时，一个节奏")
-        subtitle.setFont_(NSFont.systemFontOfSize_(10.5))
+        subtitle.setFont_(NSFont.systemFontOfSize_(9.5))
         subtitle.setTextColor_(NSColor.secondaryLabelColor())
         identity.addArrangedSubview_(title)
         identity.addArrangedSubview_(subtitle)
@@ -426,8 +420,8 @@ class MultiTimerApp(NSObject):
         # 新建计时器
         self.input_field = NSTextField.textFieldWithString_("")
         self.input_field.setPlaceholderString_("给计时任务起个名字")
-        self.input_field.setFont_(NSFont.systemFontOfSize_(13))
-        self.input_field.heightAnchor().constraintEqualToConstant_(34).setActive_(True)
+        self.input_field.setFont_(NSFont.systemFontOfSize_(12.5))
+        self.input_field.heightAnchor().constraintEqualToConstant_(28).setActive_(True)
         root.addArrangedSubview_(self.input_field)
         self._fill_width(self.input_field)
 
@@ -442,23 +436,23 @@ class MultiTimerApp(NSObject):
         root.addArrangedSubview_(presets_header)
         self._fill_width(presets_header)
 
-        self.presets_stack = _vstack(6)
+        self.presets_stack = _vstack(5)
         root.addArrangedSubview_(self.presets_stack)
         self._fill_width(self.presets_stack)
         self._rebuild_presets()
 
         # 自定义时长卡片
         custom_card = _CardView.alloc().init()
-        tools = _hstack(8)
+        tools = _hstack(6)
         custom_label = NSTextField.labelWithString_("自定义")
-        custom_label.setFont_(NSFont.systemFontOfSize_weight_(12, NSFontWeightMedium))
+        custom_label.setFont_(NSFont.systemFontOfSize_weight_(11.5, NSFontWeightMedium))
         tools.addArrangedSubview_(custom_label)
         tools_spacer = NSView.alloc().init()
         tools.addArrangedSubview_(tools_spacer)
         tools_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
         self.custom_field = NSTextField.textFieldWithString_("5")
         self.custom_field.setAlignment_(1)
-        cf_w = self.custom_field.widthAnchor().constraintEqualToConstant_(52)
+        cf_w = self.custom_field.widthAnchor().constraintEqualToConstant_(44)
         cf_w.setActive_(True)
         min_lbl = NSTextField.labelWithString_("分钟")
         min_lbl.setTextColor_(NSColor.secondaryLabelColor())
@@ -466,14 +460,14 @@ class MultiTimerApp(NSObject):
         tools.addArrangedSubview_(self.custom_field)
         tools.addArrangedSubview_(min_lbl)
         tools.addArrangedSubview_(add_btn)
-        _embed_with_insets(custom_card, tools, top=9, right=10, bottom=9, left=12)
+        _embed_with_insets(custom_card, tools, top=6, right=8, bottom=6, left=10)
         root.addArrangedSubview_(custom_card)
         self._fill_width(custom_card)
 
         # 进行中标题 + 列表
         self.section_label = _section_label("暂无进行中的计时器")
         root.addArrangedSubview_(self.section_label)
-        self.timers_stack = _vstack(8)
+        self.timers_stack = _vstack(6)
         root.addArrangedSubview_(self.timers_stack)
         self._fill_width(self.timers_stack)
 
@@ -503,12 +497,12 @@ class MultiTimerApp(NSObject):
         row = None
         for i, p in enumerate(self.presets):
             if i % 3 == 0:
-                row = _hstack(6)
+                row = _hstack(5)
                 row.setDistribution_(NSStackViewDistributionFillEqually)
                 self.presets_stack.addArrangedSubview_(row)
                 self._fill_width(row)
-            btn = _button(p["name"], self._make_start_cb(p["seconds"]), self._retain, accent=True, small=True)
-            btn.heightAnchor().constraintEqualToConstant_(30).setActive_(True)
+            btn = _button(p["name"], self._make_start_cb(p["seconds"]), self._retain, small=True)
+            btn.heightAnchor().constraintEqualToConstant_(26).setActive_(True)
             row.addArrangedSubview_(btn)
 
     def _make_start_cb(self, seconds):
@@ -587,31 +581,31 @@ class MultiTimerApp(NSObject):
     def _add_timer_row(self, timer):
         actions = []
         card = _CardView.alloc().init()
-        rowv = _vstack(8)
+        rowv = _vstack(6)
 
         name = NSTextField.wrappingLabelWithString_(timer["label"])
-        name.setPreferredMaxLayoutWidth_(PANEL_WIDTH - 112)
+        name.setPreferredMaxLayoutWidth_(PANEL_WIDTH - 100)
         name.cell().setLineBreakMode_(NSLineBreakByCharWrapping)
-        name.setFont_(NSFont.systemFontOfSize_weight_(13.5, NSFontWeightSemibold))
+        name.setFont_(NSFont.systemFontOfSize_weight_(13, NSFontWeightSemibold))
 
-        top = _hstack(8)
+        top = _hstack(6)
         top.addArrangedSubview_(name)
         title_spacer = NSView.alloc().init()
         top.addArrangedSubview_(title_spacer)
         title_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
 
         remaining = NSTextField.labelWithString_("--:--")
-        remaining.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(16, NSFontWeightBold))
-        remaining.setTextColor_(BRAND_CORAL)
+        remaining.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(15, NSFontWeightSemibold))
+        remaining.setTextColor_(NSColor.controlAccentColor())
         remaining.setContentHuggingPriority_forOrientation_(750, NSLayoutConstraintOrientationHorizontal)
         top.addArrangedSubview_(remaining)
         rowv.addArrangedSubview_(top)
 
         progress = _ProgressView.alloc().init()
-        progress.heightAnchor().constraintEqualToConstant_(5).setActive_(True)
+        progress.heightAnchor().constraintEqualToConstant_(4).setActive_(True)
         rowv.addArrangedSubview_(progress)
 
-        bottom = _hstack(6)
+        bottom = _hstack(4)
         plus1 = _button("＋1分", self._make_extend_cb(timer, 60), actions, small=True, quiet=True)
         plus10 = _button("＋10分", self._make_extend_cb(timer, 600), actions, small=True, quiet=True)
         plus60 = _button("＋1时", self._make_extend_cb(timer, 3600), actions, small=True, quiet=True)
@@ -632,7 +626,7 @@ class MultiTimerApp(NSObject):
         bottom.addArrangedSubview_(done)
         rowv.addArrangedSubview_(bottom)
 
-        _embed_with_insets(card, rowv, top=11, right=12, bottom=11, left=12)
+        _embed_with_insets(card, rowv, top=8, right=10, bottom=8, left=10)
         self.timers_stack.addArrangedSubview_(card)
         self._fill_width(card)
         top.leadingAnchor().constraintEqualToAnchor_(rowv.leadingAnchor()).setActive_(True)
@@ -700,7 +694,7 @@ class MultiTimerApp(NSObject):
         timer["remaining"].setStringValue_(fmt_remaining(remaining))
         frac = max(0.0, min(1.0, remaining / max(1, timer["duration"])))
         timer["progress"].setDoubleValue_(frac * 1000.0)
-        color = NSColor.systemRedColor() if remaining <= 10 else BRAND_CORAL
+        color = NSColor.systemRedColor() if remaining <= 10 else NSColor.controlAccentColor()
         timer["remaining"].setTextColor_(color)
 
     def _update_section(self):
@@ -708,6 +702,13 @@ class MultiTimerApp(NSObject):
         self.section_label.setStringValue_(
             "暂无进行中的计时器" if n == 0 else f"进行中 · {n}"
         )
+
+    def systemColorsDidChange_(self, _notification):
+        """Refresh custom accent-colored elements after System Settings changes."""
+        for timer in self.timers:
+            timer["progress"].refreshAccent()
+            if not timer.get("finished"):
+                self._update_row(timer)
 
     # -- 计时循环 ----------------------------------------------------------
     def _start_ticker(self):
@@ -733,10 +734,12 @@ class MultiTimerApp(NSObject):
 
     def _apply_finished_style(self, timer):
         timer["remaining"].setStringValue_("已结束")
-        timer["remaining"].setTextColor_(BRAND_CORAL)
+        timer["remaining"].setTextColor_(NSColor.systemRedColor())
         timer["progress"].setDoubleValue_(0.0)
         timer["card"].layer().setBorderWidth_(1.0)
-        timer["card"].layer().setBorderColor_(BRAND_CORAL.colorWithAlphaComponent_(0.55).CGColor())
+        timer["card"].layer().setBorderColor_(
+            NSColor.systemRedColor().colorWithAlphaComponent_(0.45).CGColor()
+        )
         timer["plus1"].setHidden_(True)
         timer["plus10"].setHidden_(True)
         timer["plus60"].setHidden_(True)
@@ -865,6 +868,20 @@ class MultiTimerApp(NSObject):
         window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
         self._preview_window = window
+        snapshot_path = os.environ.get("MULTITIMER_SNAPSHOT_PATH")
+        if snapshot_path:
+            self._save_preview_snapshot(snapshot_path)
+
+    def _save_preview_snapshot(self, snapshot_path):
+        """Render the preview content for website and README screenshots."""
+        self.content_view.setWantsLayer_(True)
+        self.content_view.layer().setBackgroundColor_(NSColor.windowBackgroundColor().CGColor())
+        self.content_view.layoutSubtreeIfNeeded()
+        bounds = self.content_view.bounds()
+        bitmap = self.content_view.bitmapImageRepForCachingDisplayInRect_(bounds)
+        self.content_view.cacheDisplayInRect_toBitmapImageRep_(bounds, bitmap)
+        data = bitmap.representationUsingType_properties_(NSBitmapImageFileTypePNG, {})
+        Path(snapshot_path).write_bytes(bytes(data))
 
     def popoverDidClose_(self, _notification):
         self._closed_at = time.time()

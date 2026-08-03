@@ -8,7 +8,7 @@ function applyTheme(theme) {
   root.dataset.theme = theme;
   themeToggle?.setAttribute("aria-pressed", String(theme === "dark"));
   themeToggle?.setAttribute("title", theme === "dark" ? "切换到浅色主题" : "切换到深色主题");
-  themeMeta?.setAttribute("content", theme === "dark" ? "#161326" : "#fff7ea");
+  themeMeta?.setAttribute("content", theme === "dark" ? "#1c1c1e" : "#f5f5f7");
 
   const themeIcon = themeToggle?.querySelector(".theme-icon");
   if (themeIcon) themeIcon.textContent = theme === "dark" ? "☀" : "◐";

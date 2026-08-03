@@ -8,21 +8,21 @@
 
 一款轻巧、原生的 macOS 菜单栏多任务倒计时器。
 
-[![Latest Release](https://img.shields.io/github/v/release/EchoForger/multi-timer?style=flat-square&label=release&color=FF6B4A)](https://github.com/EchoForger/multi-timer/releases/latest)
-[![macOS](https://img.shields.io/badge/macOS-Big%20Sur%2B-201D35?style=flat-square&logo=apple&logoColor=FFF7EA)](https://www.apple.com/macos/)
-[![License](https://img.shields.io/badge/license-MIT-C7F36B?style=flat-square&labelColor=201D35&color=C7F36B)](LICENSE)
-[![Website](https://img.shields.io/badge/website-MultiTimer-FF6B4A?style=flat-square)](https://echoforger.github.io/multi-timer/)
+[![Latest Release](https://img.shields.io/github/v/release/EchoForger/multi-timer?style=flat-square&label=release&color=007AFF)](https://github.com/EchoForger/multi-timer/releases/latest)
+[![macOS](https://img.shields.io/badge/macOS-Big%20Sur%2B-1D1D1F?style=flat-square&logo=apple&logoColor=F5F5F7)](https://www.apple.com/macos/)
+[![License](https://img.shields.io/badge/license-MIT-34C759?style=flat-square&labelColor=1D1D1F&color=34C759)](LICENSE)
+[![Website](https://img.shields.io/badge/website-MultiTimer-007AFF?style=flat-square)](https://echoforger.github.io/multi-timer/)
 
 <p>
   <a href="https://github.com/EchoForger/multi-timer/releases/latest">
-    <img src="https://img.shields.io/badge/_下载_macOS_版-201D35?style=for-the-badge&logoColor=FFF7EA" alt="下载最新的 macOS 版本">
+    <img src="https://img.shields.io/badge/_下载_macOS_版-1D1D1F?style=for-the-badge&logoColor=F5F5F7" alt="下载最新的 macOS 版本">
   </a>
 </p>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="dark.png">
   <source media="(prefers-color-scheme: light)" srcset="light.png">
-  <img src="light.png" alt="MultiTimer 软件界面" width="372">
+  <img src="light.png" alt="MultiTimer 紧凑的原生 macOS 界面" width="334">
 </picture>
 
 </div>
@@ -81,6 +81,7 @@ brew uninstall --cask multi-timer
 - 自定义快捷时间预设
 - macOS 原生到时通知
 - 自动跟随系统深浅主题
+- 按钮、进度和计时颜色跟随系统强调色
 - 自动保存预设和未结束的任务
 - 只驻留菜单栏，不占用 Dock
 - 无账户、无遥测，数据仅保存在本机

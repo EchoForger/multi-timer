@@ -7,7 +7,11 @@ const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 function applyTheme(theme) {
   root.dataset.theme = theme;
   themeToggle?.setAttribute("aria-pressed", String(theme === "dark"));
-  themeToggle?.setAttribute("title", theme === "dark" ? "切换到浅色主题" : "切换到深色主题");
+  const themeLabel = theme === "dark" ? themeToggle?.dataset.lightLabel : themeToggle?.dataset.darkLabel;
+  if (themeLabel) {
+    themeToggle.setAttribute("title", themeLabel);
+    themeToggle.setAttribute("aria-label", themeLabel);
+  }
   themeMeta?.setAttribute("content", theme === "dark" ? "#1c1c1e" : "#f5f5f7");
 
   const themeIcon = themeToggle?.querySelector(".theme-icon");
@@ -27,6 +31,14 @@ themeToggle?.addEventListener("click", () => {
 
 systemTheme.addEventListener("change", (event) => {
   applyTheme(event.matches ? "dark" : "light");
+});
+
+document.querySelectorAll("[data-language]").forEach((link) => {
+  link.addEventListener("click", () => {
+    try {
+      localStorage.setItem("multitimer-language", link.dataset.language);
+    } catch {}
+  });
 });
 
 const siteHeader = document.querySelector(".site-header");
@@ -55,12 +67,12 @@ document.querySelectorAll(".copy-button").forEach((button) => {
 
     try {
       await navigator.clipboard.writeText(text);
-      button.textContent = "已复制";
+      button.textContent = button.dataset.copySuccess || "Copied";
       window.setTimeout(() => {
-        button.textContent = "复制";
+        button.textContent = button.dataset.copyLabel || "Copy";
       }, 1800);
     } catch {
-      button.textContent = "复制失败";
+      button.textContent = button.dataset.copyError || "Copy failed";
     }
   });
 });

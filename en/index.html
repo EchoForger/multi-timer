@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f5f7">
+    <meta name="description" content="MultiTimer is a lightweight, native macOS menu bar app for running multiple timers at once.">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="MultiTimer — Many timers, one rhythm">
+    <meta property="og:description" content="Keep work, breaks, meetings, and everyday tasks on time. Native, local, and open source.">
+    <meta property="og:url" content="https://echoforger.github.io/multi-timer/en/">
+    <meta property="og:image" content="https://echoforger.github.io/multi-timer/og.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="canonical" href="https://echoforger.github.io/multi-timer/en/">
+    <link rel="alternate" hreflang="zh-Hans" href="https://echoforger.github.io/multi-timer/">
+    <link rel="alternate" hreflang="en" href="https://echoforger.github.io/multi-timer/en/">
+    <link rel="alternate" hreflang="x-default" href="https://echoforger.github.io/multi-timer/">
+    <link rel="icon" href="../assets/app-icon.png">
+    <title>MultiTimer — Multiple timers in your macOS menu bar</title>
+    <script>
+      (() => {
+        const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = systemDark ? "dark" : "light";
+      })();
+    </script>
+    <link rel="stylesheet" href="../styles.css">
+    <script src="../script.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+
+    <header class="site-header">
+      <nav class="nav shell" aria-label="Main navigation">
+        <a class="brand" href="#top" aria-label="MultiTimer home">
+          <img src="../assets/app-icon.png" alt="" width="38" height="38">
+          <span>MultiTimer</span>
+        </a>
+
+        <div class="nav-links">
+          <a href="#why">Features</a>
+          <a href="#interface">Interface</a>
+          <a href="#install">Install</a>
+        </div>
+
+        <div class="nav-actions">
+          <a class="language-toggle" href="../" lang="zh-Hans" hreflang="zh-Hans" data-language="zh" aria-label="用简体中文查看此网站" title="简体中文">
+            中文
+          </a>
+          <button class="theme-toggle" type="button" aria-label="Switch appearance" title="Switch appearance" data-light-label="Switch to light appearance" data-dark-label="Switch to dark appearance">
+            <span class="theme-icon" aria-hidden="true">◐</span>
+          </button>
+          <a class="github-link" href="https://github.com/EchoForger/multi-timer" target="_blank" rel="noreferrer">
+            GitHub <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero shell" id="top">
+        <div class="hero-copy reveal">
+          <p class="eyebrow"><span></span> Native macOS menu bar utility</p>
+          <h1>Lots of timers.<br><em>One menu bar.</em></h1>
+          <p class="hero-lede">Keep meetings, focus sessions, the oven, and your next break in sight—without switching windows or losing your flow.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/EchoForger/multi-timer/releases/latest" target="_blank" rel="noreferrer">
+              <span class="apple-mark" aria-hidden="true"></span> Download for macOS
+            </a>
+            <a class="button button-secondary" href="#brew">Install with Homebrew <span aria-hidden="true">↓</span></a>
+          </div>
+          <div class="hero-meta" aria-label="Project highlights">
+            <span><i></i> macOS Big Sur+</span>
+            <span><i></i> No accounts or telemetry</span>
+            <span><i></i> MIT licensed</span>
+          </div>
+        </div>
+
+        <div class="hero-art reveal" aria-label="MultiTimer interface preview">
+          <div class="art-grid" aria-hidden="true"></div>
+          <div class="time-chip chip-one" aria-hidden="true"><span>Focus writing</span><b>17:02</b></div>
+          <div class="time-chip chip-two" aria-hidden="true"><span>Meeting prep</span><b>1:49:02</b></div>
+          <div class="app-shot-frame">
+            <div class="shot-label"><i></i> 2 timers running</div>
+            <img
+              class="product-shot"
+              src="../light.png"
+              data-light-src="../light.png"
+              data-dark-src="../dark.png"
+              alt="MultiTimer running two timers at once"
+              width="316"
+              height="355"
+            >
+          </div>
+          <img class="floating-app-icon" src="../assets/app-icon.png" alt="" width="92" height="92" aria-hidden="true">
+        </div>
+      </section>
+
+      <section class="ticker" aria-label="Core capabilities">
+        <div class="ticker-track">
+          <span>Parallel timers <i></i></span>
+          <span>Stopwatch laps <i></i></span>
+          <span>Fixed-width summary <i></i></span>
+          <span>Native notifications <i></i></span>
+          <span>Custom presets <i></i></span>
+          <span>Automatic restore <i></i></span>
+          <span>Light and dark <i></i></span>
+          <span>Fully local <i></i></span>
+        </div>
+      </section>
+
+      <section class="section shell">
+        <div class="section-intro reveal" id="why">
+          <p class="eyebrow"><span></span> Timing without the system</p>
+          <h2>Not another productivity system.<br><em>Just a great timer.</em></h2>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature feature-main reveal">
+            <span class="feature-index">01 / MULTI</span>
+            <h3>Every task gets its own clock.</h3>
+            <p>Countdowns and stopwatches run side by side. Pause, duplicate, pin, or record laps from compact cards. Double-click or Force Touch a name to edit it in place.</p>
+            <div class="mini-timers" aria-hidden="true">
+              <div><span><i></i>Code review</span><b>24:18</b><em style="--p:72%"></em></div>
+              <div><span><i></i>Take a break</span><b>04:32</b><em style="--p:42%"></em></div>
+              <div><span><i></i>Oven</span><b>16:09</b><em style="--p:88%"></em></div>
+            </div>
+          </article>
+
+          <article class="feature feature-native reveal">
+            <span class="feature-index">02 / NATIVE</span>
+            <div class="native-symbol" aria-hidden="true"><span>●</span></div>
+            <h3>It feels like part of macOS.</h3>
+            <p>A native AppKit interface, system notifications, and updates that understand how the app was installed. New releases show their notes and let you update now, be reminded later, or skip that version.</p>
+          </article>
+
+          <article class="feature feature-private reveal">
+            <span class="feature-index">03 / PRIVATE</span>
+            <div class="private-badge" aria-hidden="true">Only on<br>this Mac</div>
+            <h3>Your time is not telemetry.</h3>
+            <p>No account and no cloud service. Presets and running tasks stay on your Mac.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="interface-section">
+        <div class="shell interface-grid">
+          <div class="interface-copy reveal" id="interface">
+            <p class="eyebrow light"><span></span> Looks right all day</p>
+            <h2>Bright in light.<br>Calm in dark.</h2>
+            <p>MultiTimer follows the macOS appearance automatically. Buttons, progress, and timer colors use your system accent—blue when your Mac is blue, green when you switch to green.</p>
+            <div class="palette" aria-label="System colors">
+              <i title="Dark appearance"></i><i title="System blue"></i><i title="Light appearance"></i><i title="System green"></i>
+            </div>
+          </div>
+          <div class="dual-shots reveal" aria-label="MultiTimer light and dark interfaces">
+            <figure class="shot-card shot-light">
+              <figcaption><span></span> Light</figcaption>
+              <img src="../light.png" alt="MultiTimer compact interface in light appearance" width="316" height="355">
+            </figure>
+            <figure class="shot-card shot-dark">
+              <figcaption><span></span> Dark</figcaption>
+              <img src="../dark.png" alt="MultiTimer compact interface in dark appearance" width="316" height="355">
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="install-section shell">
+        <div class="install-heading reveal" id="install">
+          <p class="eyebrow"><span></span> Install MultiTimer</p>
+          <h2>Two simple ways.<br><em>Pick your favorite.</em></h2>
+        </div>
+
+        <div class="install-grid">
+          <article class="install-option download-option reveal">
+            <div class="option-top">
+              <span class="option-number">01</span>
+              <span class="option-pill">Recommended</span>
+            </div>
+            <img src="../assets/app-icon.png" alt="MultiTimer app icon" width="88" height="88">
+            <h3>Download the DMG</h3>
+            <p>Open the installer and drag MultiTimer into your Applications folder.</p>
+            <a class="button button-dark" href="https://github.com/EchoForger/multi-timer/releases/latest" target="_blank" rel="noreferrer">
+              Download latest <span aria-hidden="true">↓</span>
+            </a>
+            <small>macOS Big Sur or later</small>
+          </article>
+
+          <article class="install-option brew-option reveal" id="brew">
+            <div class="option-top">
+              <span class="option-number">02</span>
+              <span class="option-pill">Homebrew</span>
+            </div>
+            <h3>Install from Terminal</h3>
+            <p>Two commands install the app. Homebrew can handle future updates too.</p>
+            <div class="terminal" aria-label="Homebrew installation commands">
+              <div class="terminal-bar">
+                <span><i></i><i></i><i></i></span>
+                <b>Terminal</b>
+                <button class="copy-button" type="button" data-copy="brew tap EchoForger/multi-timer&#10;brew install --cask multi-timer" data-copy-label="Copy" data-copy-success="Copied" data-copy-error="Copy failed" aria-label="Copy Homebrew installation commands">Copy</button>
+              </div>
+              <pre><code><span>$</span> brew tap EchoForger/multi-timer
+<span>$</span> brew install --cask multi-timer</code></pre>
+            </div>
+          </article>
+        </div>
+
+        <p class="first-open reveal">If macOS blocks the first launch, Control-click MultiTimer and choose Open. After launch, the app checks GitHub Releases for updates and asks before installing; you can also check manually from the ⓘ button in the panel.</p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <a class="brand" href="#top" aria-label="Back to top">
+          <img src="../assets/app-icon.png" alt="" width="38" height="38">
+          <span>MultiTimer</span>
+        </a>
+        <p>Many timers, one rhythm.</p>
+        <div class="footer-links">
+          <a href="https://github.com/EchoForger/multi-timer" target="_blank" rel="noreferrer">GitHub</a>
+          <a href="https://github.com/EchoForger/multi-timer/issues" target="_blank" rel="noreferrer">Issues</a>
+          <a href="https://github.com/EchoForger/multi-timer/blob/master/LICENSE" target="_blank" rel="noreferrer">MIT License</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -13,10 +13,22 @@
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta name="twitter:card" content="summary_large_image">
+    <link rel="canonical" href="https://echoforger.github.io/multi-timer/">
+    <link rel="alternate" hreflang="zh-Hans" href="https://echoforger.github.io/multi-timer/">
+    <link rel="alternate" hreflang="en" href="https://echoforger.github.io/multi-timer/en/">
+    <link rel="alternate" hreflang="x-default" href="https://echoforger.github.io/multi-timer/">
     <link rel="icon" href="assets/app-icon.png">
     <title>MultiTimer — macOS 菜单栏多任务倒计时</title>
     <script>
       (() => {
+        try {
+          const savedLanguage = localStorage.getItem("multitimer-language");
+          const browserLanguage = (navigator.languages?.[0] || navigator.language || "").toLowerCase();
+          if (savedLanguage === "en" || (!savedLanguage && !browserLanguage.startsWith("zh"))) {
+            window.location.replace(`en/${window.location.hash}`);
+            return;
+          }
+        } catch {}
         const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
         document.documentElement.dataset.theme = systemDark ? "dark" : "light";
       })();
@@ -41,7 +53,10 @@
         </div>
 
         <div class="nav-actions">
-          <button class="theme-toggle" type="button" aria-label="切换深浅主题" title="切换深浅主题">
+          <a class="language-toggle" href="en/" lang="en" hreflang="en" data-language="en" aria-label="View this website in English" title="English">
+            EN
+          </a>
+          <button class="theme-toggle" type="button" aria-label="切换深浅主题" title="切换深浅主题" data-light-label="切换到浅色主题" data-dark-label="切换到深色主题">
             <span class="theme-icon" aria-hidden="true">◐</span>
           </button>
           <a class="github-link" href="https://github.com/EchoForger/multi-timer" target="_blank" rel="noreferrer">
@@ -192,7 +207,7 @@
               <div class="terminal-bar">
                 <span><i></i><i></i><i></i></span>
                 <b>Terminal</b>
-                <button class="copy-button" type="button" data-copy="brew tap EchoForger/multi-timer&#10;brew install --cask multi-timer" aria-label="复制 Homebrew 安装命令">复制</button>
+                <button class="copy-button" type="button" data-copy="brew tap EchoForger/multi-timer&#10;brew install --cask multi-timer" data-copy-label="复制" data-copy-success="已复制" data-copy-error="复制失败" aria-label="复制 Homebrew 安装命令">复制</button>
               </div>
               <pre><code><span>$</span> brew tap EchoForger/multi-timer
 <span>$</span> brew install --cask multi-timer</code></pre>

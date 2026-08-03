@@ -7,7 +7,7 @@
 - 不在 Dock 显示 (ActivationPolicy = Accessory)
 - 输入任务名 + 点预设时间即开始; 可并行多个倒计时
 - 预设可增删改, 本地持久化; 未填任务名时自动使用 "任务 N"
-- 每行带进度条、＋1 分钟按钮; 任务名完整显示、放不下换行
+- 每行带进度条和延时按钮; 任务名单行省略、可原生行内改名
 - 到点由 MultiTimer.app 通过 UNUserNotificationCenter 发出可交互通知
   (点击 "已检查" 按钮 => 直接从列表中移除对应倒计时)
 """
@@ -67,10 +67,14 @@ from AppKit import (
     NSUserInterfaceLayoutOrientationHorizontal,
     NSStackViewDistributionFillEqually,
     NSLayoutConstraintOrientationHorizontal,
-    NSLineBreakByCharWrapping,
+    NSLineBreakByTruncatingMiddle,
     NSMinYEdge,
     NSControlSizeSmall,
     NSBezelStyleRounded,
+    NSFocusRingTypeDefault,
+    NSFocusRingTypeNone,
+    NSPressureConfiguration,
+    NSPressureBehaviorPrimaryDeepClick,
     NSImageNameStatusAvailable,
     NSAppearanceNameAqua,
     NSAppearanceNameDarkAqua,
@@ -84,14 +88,14 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 STATE_PATH = Path(
     os.environ.get(
         "MULTITIMER_STATE_PATH",
         str(Path.home() / ".config" / "multitimer" / "state.json"),
     )
 )
-PANEL_WIDTH = 310
+PANEL_WIDTH = 296
 DEFAULT_PRESETS = [
     {"name": "1min", "seconds": 60},
     {"name": "5min", "seconds": 300},
@@ -170,6 +174,111 @@ class _Action(NSObject):
         self._cb(sender)
 
 
+class _RenameTextField(NSTextField):
+    """Single-line label that starts native inline editing on macOS gestures."""
+
+    def initWithFrame_(self, frame):
+        self = objc.super(_RenameTextField, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self._rename_controller = None
+        self._deep_press_engaged = False
+        config = NSPressureConfiguration.alloc().initWithPressureBehavior_(
+            NSPressureBehaviorPrimaryDeepClick
+        )
+        self.setPressureConfiguration_(config)
+        self._pressure_configuration = config
+        return self
+
+    def setRenameController_(self, controller):
+        self._rename_controller = controller
+
+    def mouseDown_(self, event):
+        if event.clickCount() >= 2 and self._rename_controller is not None:
+            self._rename_controller.begin()
+            return
+        objc.super(_RenameTextField, self).mouseDown_(event)
+
+    def _handle_pressure_stage(self, stage):
+        if stage >= 2:
+            if not self._deep_press_engaged:
+                self._deep_press_engaged = True
+                if self._rename_controller is not None:
+                    self._rename_controller.begin()
+            return True
+        self._deep_press_engaged = False
+        return False
+
+    def pressureChangeWithEvent_(self, event):
+        if self._handle_pressure_stage(event.stage()):
+            return
+        objc.super(_RenameTextField, self).pressureChangeWithEvent_(event)
+
+
+class _RenameController(NSObject):
+    """Own the lifecycle of one timer's inline NSTextField editor."""
+
+    def initWithOwner_timer_field_(self, owner, timer, field):
+        self = objc.super(_RenameController, self).init()
+        if self is None:
+            return None
+        self._owner = owner
+        self._timer = timer
+        self._field = field
+        self._editing = False
+        self._cancel_requested = False
+        self._original = timer["label"]
+        return self
+
+    def begin(self):
+        if self._editing:
+            return
+        self._editing = True
+        self._cancel_requested = False
+        self._original = self._timer["label"]
+        self._field.setEditable_(True)
+        self._field.setSelectable_(True)
+        self._field.setBezeled_(True)
+        self._field.setDrawsBackground_(True)
+        self._field.setFocusRingType_(NSFocusRingTypeDefault)
+        window = self._field.window()
+        if window is not None:
+            window.makeFirstResponder_(self._field)
+        self._field.selectText_(None)
+
+    def _finish(self):
+        if not self._editing:
+            return
+        value = self._original if self._cancel_requested else self._field.stringValue().strip()
+        if not value:
+            value = self._original
+        self._timer["label"] = value
+        self._field.setStringValue_(value)
+        self._field.setToolTip_(f"{value}\n双击或用力按压以重命名")
+        self._field.setEditable_(False)
+        self._field.setSelectable_(False)
+        self._field.setBezeled_(False)
+        self._field.setDrawsBackground_(False)
+        self._field.setFocusRingType_(NSFocusRingTypeNone)
+        self._editing = False
+        self._cancel_requested = False
+        self._owner._persist()
+
+    def controlTextDidEndEditing_(self, _notification):
+        self._finish()
+
+    def control_textView_doCommandBySelector_(self, control, _text_view, command):
+        command_name = command.decode("ascii") if isinstance(command, bytes) else str(command)
+        if command_name == "cancelOperation:":
+            self._cancel_requested = True
+            control.window().makeFirstResponder_(None)
+            return True
+        if command_name in {"insertNewline:", "insertLineBreak:"}:
+            control.window().makeFirstResponder_(None)
+            return True
+        return False
+
+
 class _CardView(NSView):
     """Rounded surface that follows the current macOS appearance."""
 
@@ -178,7 +287,7 @@ class _CardView(NSView):
         if self is None:
             return None
         self.setWantsLayer_(True)
-        self.layer().setCornerRadius_(9.0)
+        self.layer().setCornerRadius_(8.0)
         self.layer().setMasksToBounds_(True)
         self._apply_palette()
         return self
@@ -253,7 +362,7 @@ def _hstack(spacing=6):
     return v
 
 
-def _vstack(spacing=8):
+def _vstack(spacing=6):
     v = NSStackView.alloc().init()
     v.setOrientation_(NSUserInterfaceLayoutOrientationVertical)
     v.setSpacing_(spacing)
@@ -263,7 +372,7 @@ def _vstack(spacing=8):
 
 def _section_label(text):
     lbl = NSTextField.labelWithString_(text)
-    lbl.setFont_(NSFont.systemFontOfSize_weight_(10.5, NSFontWeightSemibold))
+    lbl.setFont_(NSFont.systemFontOfSize_weight_(10, NSFontWeightSemibold))
     lbl.setTextColor_(NSColor.secondaryLabelColor())
     return lbl
 
@@ -375,39 +484,33 @@ class MultiTimerApp(NSObject):
 
     # -- 弹出面板 ----------------------------------------------------------
     def _build_popover(self):
-        content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, PANEL_WIDTH + 24, 240))
+        content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, PANEL_WIDTH + 20, 220))
         self.content_view = content
 
-        root = _vstack(8)
+        root = _vstack(5)
         root.setTranslatesAutoresizingMaskIntoConstraints_(False)
         content.addSubview_(root)
         self.root_stack = root
-        root.leadingAnchor().constraintEqualToAnchor_constant_(content.leadingAnchor(), 12).setActive_(True)
-        root.trailingAnchor().constraintEqualToAnchor_constant_(content.trailingAnchor(), -12).setActive_(True)
-        root.topAnchor().constraintEqualToAnchor_constant_(content.topAnchor(), 12).setActive_(True)
-        root.bottomAnchor().constraintEqualToAnchor_constant_(content.bottomAnchor(), -12).setActive_(True)
+        root.leadingAnchor().constraintEqualToAnchor_constant_(content.leadingAnchor(), 10).setActive_(True)
+        root.trailingAnchor().constraintEqualToAnchor_constant_(content.trailingAnchor(), -10).setActive_(True)
+        root.topAnchor().constraintEqualToAnchor_constant_(content.topAnchor(), 9).setActive_(True)
+        root.bottomAnchor().constraintEqualToAnchor_constant_(content.bottomAnchor(), -9).setActive_(True)
         root.widthAnchor().constraintEqualToConstant_(PANEL_WIDTH).setActive_(True)
 
         # 品牌头部
-        header = _hstack(8)
+        header = _hstack(7)
         header.setDistribution_(0)
         icon = NSImage.alloc().initWithContentsOfFile_(str(resource_path("assets/app-icon.png")))
         if icon is not None:
             icon_view = NSImageView.imageViewWithImage_(icon)
             icon_view.setImageScaling_(NSImageScaleProportionallyUpOrDown)
-            icon_view.widthAnchor().constraintEqualToConstant_(30).setActive_(True)
-            icon_view.heightAnchor().constraintEqualToConstant_(30).setActive_(True)
+            icon_view.widthAnchor().constraintEqualToConstant_(26).setActive_(True)
+            icon_view.heightAnchor().constraintEqualToConstant_(26).setActive_(True)
             header.addArrangedSubview_(icon_view)
 
-        identity = _vstack(1)
         title = NSTextField.labelWithString_(APP_NAME)
-        title.setFont_(NSFont.systemFontOfSize_weight_(15, NSFontWeightSemibold))
-        subtitle = NSTextField.labelWithString_("多个倒计时，一个节奏")
-        subtitle.setFont_(NSFont.systemFontOfSize_(9.5))
-        subtitle.setTextColor_(NSColor.secondaryLabelColor())
-        identity.addArrangedSubview_(title)
-        identity.addArrangedSubview_(subtitle)
-        header.addArrangedSubview_(identity)
+        title.setFont_(NSFont.systemFontOfSize_weight_(13.5, NSFontWeightSemibold))
+        header.addArrangedSubview_(title)
         spacer = NSView.alloc().init()
         header.addArrangedSubview_(spacer)
         spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
@@ -419,9 +522,9 @@ class MultiTimerApp(NSObject):
 
         # 新建计时器
         self.input_field = NSTextField.textFieldWithString_("")
-        self.input_field.setPlaceholderString_("给计时任务起个名字")
-        self.input_field.setFont_(NSFont.systemFontOfSize_(12.5))
-        self.input_field.heightAnchor().constraintEqualToConstant_(28).setActive_(True)
+        self.input_field.setPlaceholderString_("计时名称（可选）")
+        self.input_field.setFont_(NSFont.systemFontOfSize_(12))
+        self.input_field.heightAnchor().constraintEqualToConstant_(25).setActive_(True)
         root.addArrangedSubview_(self.input_field)
         self._fill_width(self.input_field)
 
@@ -436,14 +539,14 @@ class MultiTimerApp(NSObject):
         root.addArrangedSubview_(presets_header)
         self._fill_width(presets_header)
 
-        self.presets_stack = _vstack(5)
+        self.presets_stack = _vstack(4)
         root.addArrangedSubview_(self.presets_stack)
         self._fill_width(self.presets_stack)
         self._rebuild_presets()
 
         # 自定义时长卡片
         custom_card = _CardView.alloc().init()
-        tools = _hstack(6)
+        tools = _hstack(5)
         custom_label = NSTextField.labelWithString_("自定义")
         custom_label.setFont_(NSFont.systemFontOfSize_weight_(11.5, NSFontWeightMedium))
         tools.addArrangedSubview_(custom_label)
@@ -460,14 +563,15 @@ class MultiTimerApp(NSObject):
         tools.addArrangedSubview_(self.custom_field)
         tools.addArrangedSubview_(min_lbl)
         tools.addArrangedSubview_(add_btn)
-        _embed_with_insets(custom_card, tools, top=6, right=8, bottom=6, left=10)
+        self.custom_field.heightAnchor().constraintEqualToConstant_(22).setActive_(True)
+        _embed_with_insets(custom_card, tools, top=5, right=7, bottom=5, left=9)
         root.addArrangedSubview_(custom_card)
         self._fill_width(custom_card)
 
         # 进行中标题 + 列表
         self.section_label = _section_label("暂无进行中的计时器")
         root.addArrangedSubview_(self.section_label)
-        self.timers_stack = _vstack(6)
+        self.timers_stack = _vstack(5)
         root.addArrangedSubview_(self.timers_stack)
         self._fill_width(self.timers_stack)
 
@@ -502,7 +606,7 @@ class MultiTimerApp(NSObject):
                 self.presets_stack.addArrangedSubview_(row)
                 self._fill_width(row)
             btn = _button(p["name"], self._make_start_cb(p["seconds"]), self._retain, small=True)
-            btn.heightAnchor().constraintEqualToConstant_(26).setActive_(True)
+            btn.heightAnchor().constraintEqualToConstant_(23).setActive_(True)
             row.addArrangedSubview_(btn)
 
     def _make_start_cb(self, seconds):
@@ -565,7 +669,7 @@ class MultiTimerApp(NSObject):
         }
         self._add_timer_row(timer)
         self.input_field.setStringValue_("")
-        self.input_field.setPlaceholderString_("给计时任务起个名字")
+        self.input_field.setPlaceholderString_("计时名称（可选）")
         self._persist()
         self._update_size()
 
@@ -581,28 +685,42 @@ class MultiTimerApp(NSObject):
     def _add_timer_row(self, timer):
         actions = []
         card = _CardView.alloc().init()
-        rowv = _vstack(6)
+        rowv = _vstack(4)
 
-        name = NSTextField.wrappingLabelWithString_(timer["label"])
-        name.setPreferredMaxLayoutWidth_(PANEL_WIDTH - 100)
-        name.cell().setLineBreakMode_(NSLineBreakByCharWrapping)
-        name.setFont_(NSFont.systemFontOfSize_weight_(13, NSFontWeightSemibold))
+        name = _RenameTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 100, 20))
+        name.setStringValue_(timer["label"])
+        name.setFont_(NSFont.systemFontOfSize_weight_(12, NSFontWeightMedium))
+        name.setEditable_(False)
+        name.setSelectable_(False)
+        name.setBezeled_(False)
+        name.setBordered_(False)
+        name.setDrawsBackground_(False)
+        name.setFocusRingType_(NSFocusRingTypeNone)
+        name.setLineBreakMode_(NSLineBreakByTruncatingMiddle)
+        name.setMaximumNumberOfLines_(1)
+        name.setToolTip_(f"{timer['label']}\n双击或用力按压以重命名")
+        name.setContentHuggingPriority_forOrientation_(249, NSLayoutConstraintOrientationHorizontal)
+        name.setContentCompressionResistancePriority_forOrientation_(249, NSLayoutConstraintOrientationHorizontal)
+        rename = _RenameController.alloc().initWithOwner_timer_field_(self, timer, name)
+        name.setRenameController_(rename)
+        name.setDelegate_(rename)
+        actions.append(rename)
 
-        top = _hstack(6)
+        top = _hstack(5)
         top.addArrangedSubview_(name)
         title_spacer = NSView.alloc().init()
         top.addArrangedSubview_(title_spacer)
         title_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
 
         remaining = NSTextField.labelWithString_("--:--")
-        remaining.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(15, NSFontWeightSemibold))
+        remaining.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(13, NSFontWeightSemibold))
         remaining.setTextColor_(NSColor.controlAccentColor())
         remaining.setContentHuggingPriority_forOrientation_(750, NSLayoutConstraintOrientationHorizontal)
         top.addArrangedSubview_(remaining)
         rowv.addArrangedSubview_(top)
 
         progress = _ProgressView.alloc().init()
-        progress.heightAnchor().constraintEqualToConstant_(4).setActive_(True)
+        progress.heightAnchor().constraintEqualToConstant_(3).setActive_(True)
         rowv.addArrangedSubview_(progress)
 
         bottom = _hstack(4)
@@ -614,6 +732,8 @@ class MultiTimerApp(NSObject):
         done = _button("✓ 已检查", self._make_cancel_cb(timer), actions, small=True, accent=True)
         restart.setHidden_(True)
         done.setHidden_(True)
+        for button in (plus1, plus10, plus60, cancel, restart, done):
+            button.heightAnchor().constraintEqualToConstant_(22).setActive_(True)
 
         bottom.addArrangedSubview_(plus1)
         bottom.addArrangedSubview_(plus10)
@@ -626,7 +746,7 @@ class MultiTimerApp(NSObject):
         bottom.addArrangedSubview_(done)
         rowv.addArrangedSubview_(bottom)
 
-        _embed_with_insets(card, rowv, top=8, right=10, bottom=8, left=10)
+        _embed_with_insets(card, rowv, top=6, right=8, bottom=6, left=8)
         self.timers_stack.addArrangedSubview_(card)
         self._fill_width(card)
         top.leadingAnchor().constraintEqualToAnchor_(rowv.leadingAnchor()).setActive_(True)
@@ -640,6 +760,8 @@ class MultiTimerApp(NSObject):
         timer["card"] = card
         timer["progress"] = progress
         timer["remaining"] = remaining
+        timer["name"] = name
+        timer["rename"] = rename
         timer["plus1"] = plus1
         timer["plus10"] = plus10
         timer["plus60"] = plus60

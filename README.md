@@ -22,7 +22,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="dark.png">
   <source media="(prefers-color-scheme: light)" srcset="light.png">
-  <img src="light.png" alt="MultiTimer 紧凑的原生 macOS 界面" width="334">
+  <img src="light.png" alt="MultiTimer 紧凑的原生 macOS 界面" width="316">
 </picture>
 
 </div>
@@ -72,12 +72,14 @@ brew uninstall --cask multi-timer
 1. 点击菜单栏中的计时器图标。
 2. 输入任务名，或留空自动命名。
 3. 点击预设时长，或输入自定义分钟数。
-4. 运行中可以延长 1、10、60 分钟，也可随时取消。
-5. 时间到后，选择“重新计时”或“已检查”。
+4. 双击计时名称，或在 Force Touch 触控板上用力按压，可直接行内改名。
+5. 运行中可以延长 1、10、60 分钟，也可随时取消。
+6. 时间到后，选择“重新计时”或“已检查”。
 
 ## 特性
 
 - 同时运行多个倒计时
+- 双击或 Force Touch 原生行内改名
 - 自定义快捷时间预设
 - macOS 原生到时通知
 - 自动跟随系统深浅主题

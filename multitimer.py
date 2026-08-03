@@ -25,6 +25,7 @@ import time
 import urllib.request
 import uuid
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import objc
 from Foundation import (
@@ -105,7 +106,7 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.3.3"
 # macOS 26 can retain a broken Control Center visibility record for a status
 # item even after the app is reinstalled.  Use a fresh, status-bar-specific
 # identity for the production app so upgrades are not tied to that stale entry.
@@ -113,7 +114,7 @@ APP_BUNDLE_ID = "io.github.echoforger.multitimer.statusbar"
 APP_COPYRIGHT = "© 2026 EchoForger"
 APP_HOMEPAGE = "https://echoforger.github.io/multi-timer/"
 APP_REPOSITORY = "https://github.com/EchoForger/multi-timer"
-LATEST_RELEASE_API = "https://api.github.com/repos/EchoForger/multi-timer/releases/latest"
+LATEST_RELEASE_URL = f"{APP_REPOSITORY}/releases/latest"
 STATE_PATH = Path(
     os.environ.get(
         "MULTITIMER_STATE_PATH",
@@ -166,16 +167,41 @@ def _select_dmg_asset(release: dict) -> dict:
 
 
 def _fetch_latest_release() -> dict:
+    """Resolve GitHub's public latest-release redirect without using its API.
+
+    The unauthenticated REST API is limited per IP address and can return 403
+    on otherwise healthy machines.  The normal Release URL is not tied to that
+    API quota and redirects to the latest published tag.
+    """
     request = urllib.request.Request(
-        LATEST_RELEASE_API,
+        LATEST_RELEASE_URL,
         headers={
-            "Accept": "application/vnd.github+json",
             "User-Agent": f"MultiTimer/{APP_VERSION}",
-            "X-GitHub-Api-Version": "2026-03-10",
         },
+        method="HEAD",
     )
     with urllib.request.urlopen(request, timeout=20) as response:
-        return json.loads(response.read().decode("utf-8"))
+        resolved_url = response.geturl()
+    parts = [unquote(part) for part in urlparse(resolved_url).path.split("/") if part]
+    try:
+        tag = parts[parts.index("tag") + 1]
+    except (ValueError, IndexError) as exc:
+        raise RuntimeError("无法从 GitHub Release 地址识别最新版本") from exc
+    version = tag.lstrip("vV")
+    if not version or _version_tuple(version) == (0,):
+        raise RuntimeError("GitHub Release 没有有效的版本号")
+    dmg_name = f"MultiTimer-{version}.dmg"
+    return {
+        "tag_name": tag,
+        "html_url": resolved_url,
+        "body": "该版本包含功能改进与问题修复。",
+        "assets": [
+            {
+                "name": dmg_name,
+                "browser_download_url": f"{APP_REPOSITORY}/releases/download/{tag}/{dmg_name}",
+            }
+        ],
+    }
 
 
 def _current_app_bundle_path():
@@ -289,13 +315,22 @@ def _upgrade_via_homebrew(expected_version: str):
     brew = _find_brew()
     if not brew:
         raise RuntimeError("未找到 Homebrew，无法自动更新")
-    _run_checked([brew, "update"], 600, "Homebrew 更新软件源失败")
     _run_checked(
-        [brew, "upgrade", "--cask", "--no-quit", "multi-timer"],
+        [brew, "upgrade", "--cask", "--no-quit", "echoforger/multi-timer/multi-timer"],
         1200,
         "Homebrew 升级 MultiTimer 失败",
     )
     bundle_path = _best_installed_bundle_path()
+    if bundle_path and _version_tuple(_bundle_version(bundle_path)) < _version_tuple(expected_version):
+        # Brew may skip its automatic refresh when it updated recently. Only
+        # force a source refresh when the targeted upgrade left an old build.
+        _run_checked([brew, "update"], 600, "Homebrew 更新软件源失败")
+        _run_checked(
+            [brew, "upgrade", "--cask", "--no-quit", "echoforger/multi-timer/multi-timer"],
+            1200,
+            "Homebrew 升级 MultiTimer 失败",
+        )
+        bundle_path = _best_installed_bundle_path()
     if bundle_path and _version_tuple(_bundle_version(bundle_path)) < _version_tuple(expected_version):
         raise RuntimeError("Homebrew 已运行，但安装的 MultiTimer 仍不是最新版")
 
@@ -304,7 +339,21 @@ def _download_release_dmg(release: dict, destination: Path) -> Path:
     asset = _select_dmg_asset(release)
     digest = str(asset.get("digest") or "")
     if not digest.startswith("sha256:"):
-        raise RuntimeError("Release 缺少 SHA256 摘要，已取消自动安装")
+        checksum_url = f"{asset.get('browser_download_url', '')}.sha256"
+        if not checksum_url.startswith("https://"):
+            raise RuntimeError("Release 缺少 SHA256 摘要，已取消自动安装")
+        checksum_request = urllib.request.Request(
+            checksum_url,
+            headers={"User-Agent": f"MultiTimer/{APP_VERSION}"},
+        )
+        try:
+            with urllib.request.urlopen(checksum_request, timeout=20) as response:
+                expected = response.read(512).decode("ascii", "strict").strip().split()[0].lower()
+        except Exception as exc:
+            raise RuntimeError("无法获取 DMG 的 SHA256 校验值，已取消自动安装") from exc
+        if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
+            raise RuntimeError("Release 的 SHA256 校验值无效，已取消自动安装")
+        digest = f"sha256:{expected}"
     url = asset.get("browser_download_url")
     if not url:
         raise RuntimeError("Release 缺少 DMG 下载地址")

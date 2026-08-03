@@ -13,14 +13,28 @@
 """
 
 import json
+import hashlib
 import os
+import plistlib
+import shutil
+import subprocess
 import sys
+import tempfile
+import threading
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 
 import objc
-from Foundation import NSObject, NSTimer, NSMakeRect, NSMakeSize, NSNotificationCenter
+from Foundation import (
+    NSObject,
+    NSTimer,
+    NSMakeRect,
+    NSMakeSize,
+    NSNotificationCenter,
+    NSURL,
+)
 from PyObjCTools import AppHelper
 from UserNotifications import (
     UNUserNotificationCenter,
@@ -39,6 +53,7 @@ from UserNotifications import (
 from AppKit import (
     NSApplication,
     NSApp,
+    NSRunningApplication,
     NSApplicationActivationPolicyAccessory,
     NSApplicationActivationPolicyRegular,
     NSStatusBar,
@@ -56,6 +71,7 @@ from AppKit import (
     NSStackView,
     NSTextField,
     NSButton,
+    NSAlert,
     NSBox,
     NSBoxSeparator,
     NSColor,
@@ -85,10 +101,19 @@ from AppKit import (
     NSBackingStoreBuffered,
     NSBitmapImageFileTypePNG,
     NSSystemColorsDidChangeNotification,
+    NSWorkspace,
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
+# macOS 26 can retain a broken Control Center visibility record for a status
+# item even after the app is reinstalled.  Use a fresh, status-bar-specific
+# identity for the production app so upgrades are not tied to that stale entry.
+APP_BUNDLE_ID = "io.github.echoforger.multitimer.statusbar"
+APP_COPYRIGHT = "© 2026 EchoForger"
+APP_HOMEPAGE = "https://echoforger.github.io/multi-timer/"
+APP_REPOSITORY = "https://github.com/EchoForger/multi-timer"
+LATEST_RELEASE_API = "https://api.github.com/repos/EchoForger/multi-timer/releases/latest"
 STATE_PATH = Path(
     os.environ.get(
         "MULTITIMER_STATE_PATH",
@@ -109,6 +134,255 @@ def resource_path(relative: str) -> Path:
     """Return an asset path in source runs and PyInstaller bundles."""
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base / relative
+
+
+def _version_tuple(value: str) -> tuple:
+    """Convert tags such as v0.3.2 into a tuple suitable for comparison."""
+    clean = str(value).strip().lstrip("vV")
+    parts = []
+    for component in clean.split("."):
+        digits = "".join(ch for ch in component if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts or [0])
+
+
+def _release_version(release: dict) -> str:
+    return str(release.get("tag_name", "")).strip().lstrip("vV")
+
+
+def _select_dmg_asset(release: dict) -> dict:
+    version = _release_version(release)
+    assets = release.get("assets") or []
+    expected = f"MultiTimer-{version}.dmg"
+    for asset in assets:
+        if asset.get("name") == expected:
+            return asset
+    for asset in assets:
+        if str(asset.get("name", "")).lower().endswith(".dmg"):
+            return asset
+    raise RuntimeError("这个 Release 没有可用的 DMG 安装包")
+
+
+def _fetch_latest_release() -> dict:
+    request = urllib.request.Request(
+        LATEST_RELEASE_API,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"MultiTimer/{APP_VERSION}",
+            "X-GitHub-Api-Version": "2026-03-10",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _current_app_bundle_path():
+    if not getattr(sys, "frozen", False):
+        return None
+    executable = Path(sys.executable).resolve()
+    for path in (executable, *executable.parents):
+        if path.suffix.lower() == ".app" and (path / "Contents" / "MacOS").is_dir():
+            return path
+    return None
+
+
+def _find_brew():
+    candidates = [shutil.which("brew"), "/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+    return next((str(Path(item)) for item in candidates if item and Path(item).is_file()), None)
+
+
+def _is_homebrew_bundle(bundle_path: Path) -> bool:
+    """Match the running app to Homebrew's Caskroom artifact symlink."""
+    resolved = bundle_path.resolve()
+    for root in (
+        Path("/opt/homebrew/Caskroom/multi-timer"),
+        Path("/usr/local/Caskroom/multi-timer"),
+    ):
+        if not root.is_dir():
+            continue
+        for artifact in root.glob("*/MultiTimer.app"):
+            try:
+                if artifact.is_symlink() and artifact.resolve() == resolved:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _installation_source() -> str:
+    """Return homebrew, dmg, or development without relying on the GUI app PATH."""
+    forced = os.environ.get("MULTITIMER_INSTALL_SOURCE", "").lower()
+    if forced in {"homebrew", "dmg", "development"}:
+        return forced
+    bundle_path = _current_app_bundle_path()
+    if bundle_path is None:
+        return "development"
+    return "homebrew" if _is_homebrew_bundle(bundle_path) else "dmg"
+
+
+def _installation_source_hint() -> str:
+    """Fast, non-blocking source label for the About panel."""
+    forced = os.environ.get("MULTITIMER_INSTALL_SOURCE", "").lower()
+    if forced in {"homebrew", "dmg", "development"}:
+        return forced
+    bundle_path = _current_app_bundle_path()
+    if bundle_path is None:
+        return "development"
+    return "homebrew" if _is_homebrew_bundle(bundle_path) else "dmg"
+
+
+def _bundle_version(bundle_path: Path) -> str:
+    plist_path = bundle_path / "Contents" / "Info.plist"
+    with plist_path.open("rb") as stream:
+        info = plistlib.load(stream)
+    return str(info.get("CFBundleShortVersionString", "0"))
+
+
+def _bundle_identifier(bundle_path: Path) -> str:
+    plist_path = bundle_path / "Contents" / "Info.plist"
+    with plist_path.open("rb") as stream:
+        info = plistlib.load(stream)
+    return str(info.get("CFBundleIdentifier", ""))
+
+
+def _best_installed_bundle_path():
+    """Find a valid installed copy even after Homebrew replaces its symlink."""
+    candidates = [
+        Path("/Applications/MultiTimer.app"),
+        Path.home() / "Applications" / "MultiTimer.app",
+    ]
+    for root in (Path("/opt/homebrew/Caskroom/multi-timer"), Path("/usr/local/Caskroom/multi-timer")):
+        if root.is_dir():
+            candidates.extend(root.glob("*/MultiTimer.app"))
+    current = _current_app_bundle_path()
+    if current is not None:
+        candidates.append(current)
+    valid = []
+    for candidate in candidates:
+        try:
+            if candidate.is_dir() and _bundle_identifier(candidate) == APP_BUNDLE_ID:
+                valid.append((_version_tuple(_bundle_version(candidate)), candidate))
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            continue
+    if not valid:
+        return None
+    return max(valid, key=lambda item: item[0])[1]
+
+
+def _run_checked(command, timeout, error_title):
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "未知错误").strip()
+        raise RuntimeError(f"{error_title}\n{detail[-1600:]}")
+    return result
+
+
+def _upgrade_via_homebrew(expected_version: str):
+    brew = _find_brew()
+    if not brew:
+        raise RuntimeError("未找到 Homebrew，无法自动更新")
+    _run_checked([brew, "update"], 600, "Homebrew 更新软件源失败")
+    _run_checked(
+        [brew, "upgrade", "--cask", "--no-quit", "multi-timer"],
+        1200,
+        "Homebrew 升级 MultiTimer 失败",
+    )
+    bundle_path = _best_installed_bundle_path()
+    if bundle_path and _version_tuple(_bundle_version(bundle_path)) < _version_tuple(expected_version):
+        raise RuntimeError("Homebrew 已运行，但安装的 MultiTimer 仍不是最新版")
+
+
+def _download_release_dmg(release: dict, destination: Path) -> Path:
+    asset = _select_dmg_asset(release)
+    digest = str(asset.get("digest") or "")
+    if not digest.startswith("sha256:"):
+        raise RuntimeError("Release 缺少 SHA256 摘要，已取消自动安装")
+    url = asset.get("browser_download_url")
+    if not url:
+        raise RuntimeError("Release 缺少 DMG 下载地址")
+    request = urllib.request.Request(url, headers={"User-Agent": f"MultiTimer/{APP_VERSION}"})
+    sha256 = hashlib.sha256()
+    with urllib.request.urlopen(request, timeout=60) as response, destination.open("wb") as output:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            sha256.update(chunk)
+            output.write(chunk)
+    if sha256.hexdigest().lower() != digest.split(":", 1)[1].lower():
+        raise RuntimeError("DMG 的 SHA256 校验失败，已取消安装")
+    return destination
+
+
+def _install_dmg_update(release: dict, destination=None):
+    """Download, verify, stage, and atomically replace a DMG-installed app."""
+    expected_version = _release_version(release)
+    app_path = Path(destination) if destination else _current_app_bundle_path()
+    if app_path is None or app_path.name != "MultiTimer.app":
+        raise RuntimeError("当前不是可替换的 MultiTimer.app，请前往 Release 页手动安装")
+    parent = app_path.parent
+    token = uuid.uuid4().hex
+    staged = parent / f".MultiTimer.update-{token}.app"
+    backup = parent / f".MultiTimer.backup-{token}.app"
+    swapped = False
+    mounted = False
+    with tempfile.TemporaryDirectory(prefix="multitimer-update-") as temp:
+        temp_path = Path(temp)
+        dmg_path = _download_release_dmg(release, temp_path / f"MultiTimer-{expected_version}.dmg")
+        mount_path = temp_path / "mount"
+        mount_path.mkdir()
+        try:
+            _run_checked(
+                ["/usr/bin/hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mount_path), str(dmg_path)],
+                120,
+                "打开 DMG 失败",
+            )
+            mounted = True
+            source_app = mount_path / "MultiTimer.app"
+            if not source_app.is_dir():
+                raise RuntimeError("DMG 中没有 MultiTimer.app")
+            if _version_tuple(_bundle_version(source_app)) != _version_tuple(expected_version):
+                raise RuntimeError("DMG 内应用的版本与 Release 不一致")
+            _run_checked(
+                ["/usr/bin/codesign", "--verify", "--deep", "--strict", str(source_app)],
+                60,
+                "MultiTimer.app 完整性验证失败",
+            )
+            _run_checked(["/usr/bin/ditto", str(source_app), str(staged)], 180, "复制新版应用失败")
+            _run_checked(
+                ["/usr/bin/codesign", "--verify", "--deep", "--strict", str(staged)],
+                60,
+                "更新缓存的应用完整性验证失败",
+            )
+            os.replace(app_path, backup)
+            try:
+                os.replace(staged, app_path)
+                swapped = True
+            except Exception:
+                os.replace(backup, app_path)
+                raise
+            shutil.rmtree(backup, ignore_errors=True)
+        finally:
+            if mounted:
+                subprocess.run(
+                    ["/usr/bin/hdiutil", "detach", str(mount_path), "-force"],
+                    capture_output=True,
+                    timeout=60,
+                    check=False,
+                )
+            if staged.exists():
+                shutil.rmtree(staged, ignore_errors=True)
+            if backup.exists() and not swapped and not app_path.exists():
+                os.replace(backup, app_path)
+
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +688,7 @@ class MultiTimerApp(NSObject):
         self._retain = []         # 全局 target 保活
         self._closed_at = 0.0
         self._did_finish_launching = False
+        self._update_in_progress = False
         return self
 
     def applicationDidFinishLaunching_(self, _notification):
@@ -482,6 +757,170 @@ class MultiTimerApp(NSObject):
         if self.status_item.respondsToSelector_("setVisible:"):
             self.status_item.setVisible_(True)
 
+    # -- 关于 / 更新 -------------------------------------------------------
+    def _app_icon(self):
+        return NSImage.alloc().initWithContentsOfFile_(str(resource_path("assets/app-icon.png")))
+
+    def _show_alert(self, title, detail="", buttons=("好",)):
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_(title)
+        if detail:
+            alert.setInformativeText_(detail)
+        icon = self._app_icon()
+        if icon is not None:
+            alert.setIcon_(icon)
+        for button_title in buttons:
+            alert.addButtonWithTitle_(button_title)
+        NSApp.activateIgnoringOtherApps_(True)
+        return alert.runModal()
+
+    def _open_url(self, url):
+        NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
+
+    def _show_about(self):
+        if self.popover.isShown():
+            self.popover.close()
+        source = {
+            "homebrew": "Homebrew",
+            "dmg": "DMG",
+            "development": "开发模式",
+        }.get(_installation_source_hint(), "未知")
+        detail = (
+            f"版本 {APP_VERSION}\n"
+            f"安装来源：{source}\n\n"
+            "多个倒计时，一个节奏。\n"
+            "原生 macOS 菜单栏多任务倒计时器。\n\n"
+            f"{APP_COPYRIGHT}\n"
+            "MIT License · 无账户 · 无遥测 · 数据仅在本机"
+        )
+        response = self._show_alert(
+            f"关于 {APP_NAME}",
+            detail,
+            ("检查更新", "项目主页", "关闭"),
+        )
+        if response == 1000:
+            self._check_for_updates()
+        elif response == 1001:
+            self._open_url(APP_REPOSITORY)
+
+    def _check_for_updates(self):
+        if self._update_in_progress:
+            self._show_alert("更新正在进行", "请稍候，MultiTimer 会在完成后通知你。")
+            return
+        self._update_in_progress = True
+        self.status_item.button().setToolTip_("正在检查 MultiTimer 更新…")
+        threading.Thread(target=self._check_update_worker, daemon=True).start()
+
+    def _check_update_worker(self):
+        try:
+            release = _fetch_latest_release()
+            source = _installation_source()
+        except Exception as exc:
+            AppHelper.callAfter(self._update_failed, f"检查更新失败\n{exc}")
+            return
+        AppHelper.callAfter(self._present_update, release, source)
+
+    def _present_update(self, release, source):
+        latest = _release_version(release)
+        if not latest:
+            self._update_failed("GitHub Release 没有有效的版本号")
+            return
+        if _version_tuple(latest) <= _version_tuple(APP_VERSION):
+            self._update_in_progress = False
+            self.status_item.button().setToolTip_(APP_NAME)
+            self._show_alert("已是最新版", f"你正在使用 MultiTimer {APP_VERSION}。")
+            return
+
+        notes = str(release.get("body") or "该版本包含功能改进与问题修复。").strip()
+        if len(notes) > 900:
+            notes = notes[:897] + "…"
+        if source == "homebrew":
+            self.status_item.button().setToolTip_(f"正在通过 Homebrew 更新到 {latest}…")
+            threading.Thread(target=self._brew_update_worker, args=(latest,), daemon=True).start()
+            return
+        if source == "dmg":
+            self._update_in_progress = False
+            self.status_item.button().setToolTip_(APP_NAME)
+            response = self._show_alert(
+                f"发现 MultiTimer {latest}",
+                f"当前版本：{APP_VERSION}\n\n{notes}\n\n是否下载、校验并安装更新？",
+                ("下载并安装", "稍后"),
+            )
+            if response == 1000:
+                self._update_in_progress = True
+                self.status_item.button().setToolTip_(f"正在安装 MultiTimer {latest}…")
+                threading.Thread(
+                    target=self._dmg_update_worker,
+                    args=(release, latest),
+                    daemon=True,
+                ).start()
+            return
+
+        self._update_in_progress = False
+        self.status_item.button().setToolTip_(APP_NAME)
+        response = self._show_alert(
+            f"发现 MultiTimer {latest}",
+            f"当前正在开发模式中运行，不会覆盖源码。\n\n{notes}",
+            ("打开 Release 页", "稍后"),
+        )
+        if response == 1000:
+            self._open_url(str(release.get("html_url") or f"{APP_REPOSITORY}/releases/latest"))
+
+    def _brew_update_worker(self, latest):
+        try:
+            _upgrade_via_homebrew(latest)
+        except Exception as exc:
+            AppHelper.callAfter(self._update_failed, str(exc))
+            return
+        AppHelper.callAfter(self._update_succeeded, latest, "Homebrew")
+
+    def _dmg_update_worker(self, release, latest):
+        try:
+            _install_dmg_update(release)
+        except Exception as exc:
+            AppHelper.callAfter(self._update_failed, str(exc))
+            return
+        AppHelper.callAfter(self._update_succeeded, latest, "DMG")
+
+    def _update_failed(self, detail):
+        self._update_in_progress = False
+        self.status_item.button().setToolTip_(APP_NAME)
+        response = self._show_alert("更新未完成", detail, ("好", "打开 Release 页"))
+        if response == 1001:
+            self._open_url(f"{APP_REPOSITORY}/releases/latest")
+
+    def _update_succeeded(self, latest, source):
+        self._update_in_progress = False
+        self.status_item.button().setToolTip_(APP_NAME)
+        response = self._show_alert(
+            "更新已安装",
+            f"MultiTimer {latest} 已通过 {source} 安装完成。重新启动后生效。",
+            ("现在重新启动", "稍后"),
+        )
+        if response == 1000:
+            self._relaunch()
+
+    def _relaunch(self):
+        bundle_path = _best_installed_bundle_path()
+        if bundle_path is None:
+            return
+        self._persist()
+        subprocess.Popen(
+            [
+                "/bin/sh",
+                "-c",
+                "sleep 1; exec /usr/bin/open -n \"$1\"",
+                "multitimer-relaunch",
+                str(bundle_path),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+        NSApp.terminate_(None)
+
     # -- 弹出面板 ----------------------------------------------------------
     def _build_popover(self):
         content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, PANEL_WIDTH + 20, 220))
@@ -514,6 +953,9 @@ class MultiTimerApp(NSObject):
         spacer = NSView.alloc().init()
         header.addArrangedSubview_(spacer)
         spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
+        about_btn = _button("ⓘ", lambda s: self._show_about(), self._retain, small=True, quiet=True)
+        about_btn.setToolTip_(f"关于 {APP_NAME}")
+        header.addArrangedSubview_(about_btn)
         quit_btn = _button("×", lambda s: self._quit(), self._retain, small=True, quiet=True)
         quit_btn.setToolTip_("退出 MultiTimer")
         header.addArrangedSubview_(quit_btn)
@@ -1027,6 +1469,14 @@ class MultiTimerApp(NSObject):
 def main():
     app = NSApplication.sharedApplication()
     preview = os.environ.get("MULTITIMER_PREVIEW") == "1"
+    if not preview:
+        current_pid = os.getpid()
+        running = NSRunningApplication.runningApplicationsWithBundleIdentifier_(APP_BUNDLE_ID)
+        if any(candidate.processIdentifier() != current_pid for candidate in running):
+            # A menu-bar app has no window to activate.  Keeping exactly one
+            # instance also prevents duplicate status-item hosts in Control
+            # Center, which can otherwise make macOS hide both of them.
+            return
     policy = NSApplicationActivationPolicyRegular if preview else NSApplicationActivationPolicyAccessory
     app.setActivationPolicy_(policy)  # 正常运行时不显示 Dock 图标
     appearance = os.environ.get("MULTITIMER_APPEARANCE", "").lower()

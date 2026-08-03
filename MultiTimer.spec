@@ -50,13 +50,14 @@ app = BUNDLE(
     coll,
     name='MultiTimer.app',
     icon='assets/MultiTimer.icns',
-    bundle_identifier='io.github.echoforger.multitimer.menubar',
+    bundle_identifier='io.github.echoforger.multitimer.statusbar',
     info_plist={
         'LSUIElement': True,               # 纯菜单栏应用, 不显示 Dock 图标
         'NSHighResolutionCapable': True,
         'CFBundleName': 'MultiTimer',
         'CFBundleDisplayName': 'MultiTimer',
-        'CFBundleShortVersionString': '0.3.1',
-        'CFBundleVersion': '0.3.1',
+        'CFBundleShortVersionString': '0.3.2',
+        'CFBundleVersion': '0.3.2',
+        'NSHumanReadableCopyright': '© 2026 EchoForger · MIT License',
     },
 )

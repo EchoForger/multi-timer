@@ -73,8 +73,11 @@ brew uninstall --cask multi-timer
 2. 输入任务名，或留空自动命名。
 3. 点击预设时长，或输入自定义分钟数。
 4. 双击计时名称，或在 Force Touch 触控板上用力按压，可直接行内改名。
-5. 运行中可以延长 1、10、60 分钟，也可随时取消。
-6. 时间到后，选择“重新计时”或“已检查”。
+5. 运行中可以暂停、复制、置顶，或增加/减少剩余时间。
+6. 点击“秒表”开始正向计时，并使用“计圈”记录圈次。
+7. 时间到后，选择“重新计时”或“已检查”。
+
+点击右上角的齿轮可设置登录时启动、菜单栏剩余时间/数量、最近到期优先排序和界面语言。通知被关闭时，面板会直接显示权限状态和系统设置入口。
 
 ## 关于与更新
 
@@ -87,17 +90,43 @@ MultiTimer 每次启动都会通过 GitHub Release 检查最新版。发现新�
 ## 特性
 
 - 同时运行多个倒计时
+- 秒表模式与圈次记录
+- 暂停、复制、置顶和最近到期排序
+- `-1 / -5 / -10 分钟`安全减时
+- 可选在菜单栏显示最近剩余时间与运行数量
+- 原生登录项与通知权限诊断
 - 双击或 Force Touch 原生行内改名
 - 原生关于面板与安装来源感知更新
 - 自定义快捷时间预设
 - macOS 原生到时通知
 - 自动跟随系统深浅主题
+- 跟随系统语言，并可覆盖为简体中文或英文
 - 按钮、进度和计时颜色跟随系统强调色
 - 自动保存预设和未结束的任务
 - 只驻留菜单栏，不占用 Dock
 - 无账户、无遥测，数据仅保存在本机
 
 本地状态保存在 `~/.config/multitimer/state.json`。
+
+## 自动化
+
+启动一个名为 Tea 的 5 分钟倒计时：
+
+```text
+multitimer://start?name=Tea&minutes=5
+```
+
+通过 Homebrew 或源码安装后，也可使用命令行控制正在运行的菜单栏实例：
+
+```bash
+multitimer start Tea 5
+multitimer start --stopwatch Focus
+multitimer list
+multitimer pause Tea
+multitimer cancel Tea
+```
+
+这些命令只使用本机 Unix Socket，不开放网络端口。
 
 ## 开发者
 
@@ -127,6 +156,12 @@ pyinstaller MultiTimer.spec --noconfirm --clean
 构建结果位于 `dist/MultiTimer.app`。
 
 ### 参与贡献
+
+运行逻辑测试：
+
+```bash
+python3 -m unittest discover -s tests -v
+```
 
 欢迎提交 [Issue](https://github.com/EchoForger/multi-timer/issues) 和 Pull Request。修改界面时，请同时检查浅色、深色、长任务名以及计时结束状态。
 

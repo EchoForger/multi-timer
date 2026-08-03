@@ -24,6 +24,8 @@ import threading
 import time
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -106,7 +108,7 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.3.5"
+APP_VERSION = "0.3.6"
 # macOS 26 can retain a broken Control Center visibility record for a status
 # item even after the app is reinstalled.  Use a fresh, status-bar-specific
 # identity for the production app so upgrades are not tied to that stale entry.
@@ -115,6 +117,7 @@ APP_COPYRIGHT = "© 2026 EchoForger"
 APP_HOMEPAGE = "https://echoforger.github.io/multi-timer/"
 APP_REPOSITORY = "https://github.com/EchoForger/multi-timer"
 LATEST_RELEASE_URL = f"{APP_REPOSITORY}/releases/latest"
+RELEASES_FEED_URL = f"{APP_REPOSITORY}/releases.atom"
 STATE_PATH = Path(
     os.environ.get(
         "MULTITIMER_STATE_PATH",
@@ -166,6 +169,59 @@ def _select_dmg_asset(release: dict) -> dict:
     raise RuntimeError("这个 Release 没有可用的 DMG 安装包")
 
 
+class _ReleaseNotesParser(HTMLParser):
+    """Convert GitHub's release-note HTML into compact alert-friendly text."""
+
+    _BLOCKS = {"h1", "h2", "h3", "p", "ul", "ol", "li", "br"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._parts = []
+
+    def handle_starttag(self, tag, _attrs):
+        if tag == "li":
+            self._parts.append("\n• ")
+        elif tag in self._BLOCKS:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self._BLOCKS:
+            self._parts.append("\n")
+
+    def handle_data(self, data):
+        self._parts.append(data)
+
+    def text(self):
+        lines = []
+        for line in "".join(self._parts).splitlines():
+            cleaned = " ".join(line.split())
+            if cleaned:
+                lines.append(cleaned)
+        return "\n".join(lines)
+
+
+def _fetch_release_notes(tag: str) -> str:
+    """Read release notes from GitHub Releases' public Atom feed."""
+    request = urllib.request.Request(
+        RELEASES_FEED_URL,
+        headers={"User-Agent": f"MultiTimer/{APP_VERSION}"},
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        root = ET.fromstring(response.read())
+    namespace = {"atom": "http://www.w3.org/2005/Atom"}
+    for entry in root.findall("atom:entry", namespace):
+        entry_id = str(entry.findtext("atom:id", default="", namespaces=namespace))
+        if not entry_id.endswith(f"/{tag}"):
+            continue
+        content = entry.findtext("atom:content", default="", namespaces=namespace)
+        parser = _ReleaseNotesParser()
+        parser.feed(content)
+        notes = parser.text().strip()
+        if notes:
+            return notes
+    return "该版本包含功能改进与问题修复。"
+
+
 def _fetch_latest_release() -> dict:
     """Resolve GitHub's public latest-release redirect without using its API.
 
@@ -190,11 +246,15 @@ def _fetch_latest_release() -> dict:
     version = tag.lstrip("vV")
     if not version or _version_tuple(version) == (0,):
         raise RuntimeError("GitHub Release 没有有效的版本号")
+    try:
+        notes = _fetch_release_notes(tag)
+    except Exception:
+        notes = "该版本包含功能改进与问题修复。"
     dmg_name = f"MultiTimer-{version}.dmg"
     return {
         "tag_name": tag,
         "html_url": resolved_url,
-        "body": "该版本包含功能改进与问题修复。",
+        "body": notes,
         "assets": [
             {
                 "name": dmg_name,
@@ -459,18 +519,19 @@ _NOTIF_ACTION_CHECK = "MARK_CHECKED"
 
 def load_state() -> dict:
     if not STATE_PATH.exists():
-        return {"presets": [dict(p) for p in DEFAULT_PRESETS], "timers": []}
+        return {"presets": [dict(p) for p in DEFAULT_PRESETS], "timers": [], "skipped_update": ""}
     try:
         data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
     except Exception:
-        return {"presets": [dict(p) for p in DEFAULT_PRESETS], "timers": []}
+        return {"presets": [dict(p) for p in DEFAULT_PRESETS], "timers": [], "skipped_update": ""}
     presets = data.get("presets") or [dict(p) for p in DEFAULT_PRESETS]
     now = time.time()
     timers = [t for t in data.get("timers", []) if t.get("end_ts", 0) > now]
-    return {"presets": presets, "timers": timers}
+    skipped_update = str(data.get("skipped_update") or "")
+    return {"presets": presets, "timers": timers, "skipped_update": skipped_update}
 
 
-def save_state(presets: list, timers: list) -> None:
+def save_state(presets: list, timers: list, skipped_update="") -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "presets": presets,
@@ -478,6 +539,7 @@ def save_state(presets: list, timers: list) -> None:
             {"id": t["id"], "label": t["label"], "end_ts": t["end_ts"], "duration": t["duration"]}
             for t in timers
         ],
+        "skipped_update": skipped_update,
     }
     STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -733,6 +795,7 @@ class MultiTimerApp(NSObject):
         state = load_state()
         self.presets = state["presets"]
         self._initial_timers = state["timers"]
+        self._skipped_update = state["skipped_update"]
         self.timers = []          # dict: id/label/end_ts/duration/view/name/progress/actions
         self._retain = []         # 全局 target 保活
         self._closed_at = 0.0
@@ -892,6 +955,27 @@ class MultiTimerApp(NSObject):
                 self._show_alert("已是最新版", f"你正在使用 MultiTimer {APP_VERSION}。")
             return
 
+        if automatic and latest == self._skipped_update:
+            self._update_in_progress = False
+            self.status_item.button().setToolTip_(APP_NAME)
+            return
+
+        notes = str(release.get("body") or "该版本包含功能改进与问题修复。").strip()
+        if len(notes) > 1100:
+            notes = notes[:1097] + "…"
+        response = self._show_alert(
+            f"发现 MultiTimer {latest}",
+            f"当前版本：{APP_VERSION}\n\n新版特性\n{notes}",
+            ("立即更新", "晚点提醒我", "跳过这个版本"),
+        )
+        if response == 1002:
+            self._skipped_update = latest
+            self._persist()
+        if response != 1000:
+            self._update_in_progress = False
+            self.status_item.button().setToolTip_(APP_NAME)
+            return
+
         if source == "homebrew":
             self.status_item.button().setToolTip_(f"正在通过 Homebrew 更新到 {latest}…")
             threading.Thread(target=self._brew_update_worker, args=(latest,), daemon=True).start()
@@ -907,18 +991,7 @@ class MultiTimerApp(NSObject):
 
         self._update_in_progress = False
         self.status_item.button().setToolTip_(APP_NAME)
-        if automatic:
-            return
-        notes = str(release.get("body") or "该版本包含功能改进与问题修复。").strip()
-        if len(notes) > 900:
-            notes = notes[:897] + "…"
-        response = self._show_alert(
-            f"发现 MultiTimer {latest}",
-            f"当前正在开发模式中运行，不会覆盖源码。\n\n{notes}",
-            ("打开 Release 页", "稍后"),
-        )
-        if response == 1000:
-            self._open_url(str(release.get("html_url") or f"{APP_REPOSITORY}/releases/latest"))
+        self._open_url(str(release.get("html_url") or f"{APP_REPOSITORY}/releases/latest"))
 
     def _automatic_check_failed(self):
         """Keep launch-time connectivity failures unobtrusive."""
@@ -1514,7 +1587,7 @@ class MultiTimerApp(NSObject):
         self.popover.setContentSize_(self.content_view.fittingSize())
 
     def _persist(self):
-        save_state(self.presets, self.timers)
+        save_state(self.presets, self.timers, self._skipped_update)
 
     def _quit(self):
         self._persist()

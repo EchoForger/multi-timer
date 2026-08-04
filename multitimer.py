@@ -68,6 +68,7 @@ from AppKit import (
     NSApplicationActivationPolicyAccessory,
     NSApplicationActivationPolicyRegular,
     NSStatusBar,
+    NSStatusItemBehaviorTerminationOnRemoval,
     NSSquareStatusItemLength,
     NSVariableStatusItemLength,
     NSMenu,
@@ -122,11 +123,16 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
 # macOS 26 can retain a broken Control Center visibility record for a status
 # item even after the app is reinstalled.  Use a fresh, status-bar-specific
 # identity for the production app so upgrades are not tied to that stale entry.
-APP_BUNDLE_ID = "io.github.echoforger.multitimer.statusbar"
+APP_BUNDLE_ID = "io.github.echoforger.multitimer.menuapp2"
+# A stable, explicit identity lets Control Center restore the status item
+# instead of treating every launch as a new ephemeral host. This new app
+# identity is intentionally different from legacy records that macOS may have
+# remembered as hidden. Keep this value stable across future releases.
+STATUS_ITEM_AUTOSAVE_NAME = f"{APP_BUNDLE_ID}.primary"
 APP_COPYRIGHT = "© 2026 EchoForger"
 APP_HOMEPAGE = "https://echoforger.github.io/multi-timer/"
 APP_REPOSITORY = "https://github.com/EchoForger/multi-timer"
@@ -238,6 +244,13 @@ def _language_for_settings(settings: dict) -> str:
     # Per-app language is managed by macOS in Language & Region. NSLocale
     # reflects that application-specific choice at the next launch.
     return _system_language()
+
+
+def _status_item_autosave_name() -> str:
+    """Keep production and source builds from sharing Control Center state."""
+    if getattr(sys, "frozen", False):
+        return STATUS_ITEM_AUTOSAVE_NAME
+    return f"{STATUS_ITEM_AUTOSAVE_NAME}.development"
 
 
 def _parse_multitimer_url(value: str) -> dict:
@@ -400,6 +413,45 @@ def _current_app_bundle_path():
         if path.suffix.lower() == ".app" and (path / "Contents" / "MacOS").is_dir():
             return path
     return None
+
+
+def _has_launchservices_identity() -> bool:
+    """Return whether this frozen GUI was launched as its own macOS app."""
+    service_name = os.environ.get("XPC_SERVICE_NAME", "")
+    return service_name.startswith(f"application.{APP_BUNDLE_ID}.")
+
+
+def _relaunch_via_launchservices_if_needed() -> bool:
+    """Avoid macOS 26 assigning our status item to the parent application.
+
+    Directly executing Contents/MacOS/MultiTimer inherits the terminal or
+    automation host's XPC identity. Control Center can then persist MultiTimer's
+    menu item under that foreign app and hide it when the foreign app is not
+    allowed in the menu bar. LaunchServices gives the process its own identity.
+    """
+    if not getattr(sys, "frozen", False) or _has_launchservices_identity():
+        return False
+    bundle_path = _current_app_bundle_path()
+    if bundle_path is None:
+        return False
+    command = ["/usr/bin/open", "-n", "-g"]
+    for key in (
+        "MULTITIMER_STATE_PATH",
+        "MULTITIMER_DISABLE_NOTIFICATIONS",
+        "MULTITIMER_INSTALL_SOURCE",
+        "MULTITIMER_APPEARANCE",
+        "MULTITIMER_PREVIEW",
+        "MULTITIMER_PREVIEW_VIEW",
+        "MULTITIMER_SNAPSHOT_PATH",
+    ):
+        if key in os.environ:
+            command.extend(["--env", f"{key}={os.environ[key]}"])
+    command.append(str(bundle_path))
+    try:
+        result = subprocess.run(command, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
 
 
 def _find_brew():
@@ -1136,10 +1188,13 @@ class MultiTimerApp(NSObject):
         initial_length = NSVariableStatusItemLength if wants_summary else NSSquareStatusItemLength
         self.status_item = bar.statusItemWithLength_(initial_length)
         self._status_signature = None
-        # Do not set an autosave name here. On recent macOS versions, launching
-        # an installed build and a development build with the same bundle ID can
-        # make Control Center classify the duplicate autosaved item as blocked,
-        # leaving the application alive without a visible menu-bar icon.
+        if self.status_item.respondsToSelector_("setAutosaveName:"):
+            self.status_item.setAutosaveName_(_status_item_autosave_name())
+        if self.status_item.respondsToSelector_("setBehavior:"):
+            # This app has no Dock icon or separate window. If the user removes
+            # its only entry point, quitting is safer than leaving an invisible
+            # background process behind.
+            self.status_item.setBehavior_(NSStatusItemBehaviorTerminationOnRemoval)
         btn = self.status_item.button()
         btn.setToolTip_(APP_NAME)
         btn.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(12, NSFontWeightMedium))
@@ -1186,6 +1241,10 @@ class MultiTimerApp(NSObject):
         item = getattr(self, "status_item", None)
         if item is None:
             return
+        # Control Center may finish applying its saved placement after AppKit
+        # creates the item. Reassert visibility once after that restoration.
+        if item.respondsToSelector_("setVisible:"):
+            item.setVisible_(True)
         visible = True
         if item.respondsToSelector_("isVisible"):
             visible = bool(item.isVisible())
@@ -2214,10 +2273,12 @@ class MultiTimerApp(NSObject):
 
     def tick_(self, _timer):
         newly_finished = []
+        panel_visible = bool(getattr(self, "popover", None) and self.popover.isShown())
         for timer in self.timers:
             if timer.get("finished"):
                 continue
-            self._update_row(timer)
+            if panel_visible:
+                self._update_row(timer)
             if timer.get("kind") == "countdown" and not timer.get("paused") and self._timer_remaining(timer) <= 0:
                 newly_finished.append(timer)
         for timer in newly_finished:
@@ -2385,6 +2446,10 @@ class MultiTimerApp(NSObject):
             return
         if time.time() - self._closed_at < 0.25:
             return
+        for timer in self.timers:
+            if not timer.get("finished"):
+                self._update_row(timer)
+        self._update_size()
         btn = self.status_item.button()
         self.popover.showRelativeToRect_ofView_preferredEdge_(btn.bounds(), btn, NSMinYEdge)
         NSApp.activateIgnoringOtherApps_(True)
@@ -2467,6 +2532,8 @@ class MultiTimerApp(NSObject):
 def main():
     if len(sys.argv) > 1 and sys.argv[1] in {"start", "list", "pause", "cancel", "help", "--help", "-h"}:
         raise SystemExit(_run_cli(sys.argv[1:]))
+    if _relaunch_via_launchservices_if_needed():
+        return
     app = NSApplication.sharedApplication()
     preview = os.environ.get("MULTITIMER_PREVIEW") == "1"
     if not preview:

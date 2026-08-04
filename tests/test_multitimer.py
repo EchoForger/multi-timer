@@ -17,6 +17,51 @@ class _Switch:
 
 
 class MultiTimerLogicTests(unittest.TestCase):
+    def test_frozen_gui_relaunches_when_it_inherits_a_foreign_xpc_identity(self):
+        completed = mock.Mock(returncode=0)
+        with (
+            mock.patch.object(multitimer.sys, "frozen", True, create=True),
+            mock.patch.object(
+                multitimer, "_current_app_bundle_path",
+                return_value=Path("/Applications/MultiTimer.app"),
+            ),
+            mock.patch.object(multitimer.subprocess, "run", return_value=completed) as run,
+            mock.patch.dict(
+                multitimer.os.environ,
+                {
+                    "XPC_SERVICE_NAME": "application.com.openai.codex.123",
+                    "MULTITIMER_STATE_PATH": "/private/tmp/multitimer-test.json",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(multitimer._relaunch_via_launchservices_if_needed())
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], ["/usr/bin/open", "-n", "-g"])
+        self.assertIn("MULTITIMER_STATE_PATH=/private/tmp/multitimer-test.json", command)
+        self.assertEqual(command[-1], "/Applications/MultiTimer.app")
+
+    def test_frozen_gui_keeps_running_with_its_own_launchservices_identity(self):
+        with (
+            mock.patch.object(multitimer.sys, "frozen", True, create=True),
+            mock.patch.dict(
+                multitimer.os.environ,
+                {"XPC_SERVICE_NAME": f"application.{multitimer.APP_BUNDLE_ID}.123"},
+                clear=True,
+            ),
+            mock.patch.object(multitimer.subprocess, "run") as run,
+        ):
+            self.assertFalse(multitimer._relaunch_via_launchservices_if_needed())
+        run.assert_not_called()
+
+    def test_status_item_uses_separate_stable_names_for_release_and_development(self):
+        with mock.patch.object(multitimer.sys, "frozen", True, create=True):
+            release_name = multitimer._status_item_autosave_name()
+        with mock.patch.object(multitimer.sys, "frozen", False, create=True):
+            development_name = multitimer._status_item_autosave_name()
+        self.assertEqual(release_name, multitimer.STATUS_ITEM_AUTOSAVE_NAME)
+        self.assertEqual(development_name, f"{release_name}.development")
+
     def test_status_time_uses_stable_hour_minute_format(self):
         self.assertEqual(multitimer.fmt_status_remaining(0), "00:00")
         self.assertEqual(multitimer.fmt_status_remaining(1), "00:01")

@@ -79,6 +79,7 @@ rg -n 'APP_VERSION|CFBundleShortVersionString|CFBundleVersion|^version =' \
 - [ ] `MultiTimer.spec` 保留 `'LSUIElement': True`。
 - [ ] 正常启动使用 `NSApplicationActivationPolicyAccessory`。
 - [ ] 设置入口仍从 Popover 打开，不创建独立常驻窗口。
+- [ ] 正式版状态栏项目使用稳定且唯一的 `autosaveName`；开发版使用不同名称，避免共享 Control Center 状态。
 - [ ] 控件优先使用 AppKit 原生控件和 SF Symbols。
 - [ ] 卡片宽度一致，按钮不被压缩或截断。
 - [ ] 分别检查没有计时器、多个倒计时、秒表、暂停、完成和长名称。
@@ -214,7 +215,7 @@ file dist/MultiTimer.app/Contents/MacOS/MultiTimer
 
 - [ ] 版本号正确。
 - [ ] `LSUIElement` 为 `true`。
-- [ ] Bundle ID 为 `io.github.echoforger.multitimer.statusbar`。
+- [ ] Bundle ID 为 `io.github.echoforger.multitimer.menuapp2`。
 - [ ] `CFBundleURLTypes` 包含 `multitimer`。
 - [ ] 当前构建架构与 Release 说明一致。
 - [ ] `codesign --verify` 通过。
@@ -223,14 +224,17 @@ file dist/MultiTimer.app/Contents/MacOS/MultiTimer
 
 ## 8. 应用包冒烟测试
 
-用打包后的可执行文件启动独立测试实例：
+用 LaunchServices 启动打包后的独立测试实例：
 
 ```bash
-MULTITIMER_PREVIEW=1 \
-MULTITIMER_DISABLE_NOTIFICATIONS=1 \
-MULTITIMER_STATE_PATH=/private/tmp/multitimer-bundle-test.json \
-dist/MultiTimer.app/Contents/MacOS/MultiTimer
+open -n -g \
+  --env MULTITIMER_PREVIEW=1 \
+  --env MULTITIMER_DISABLE_NOTIFICATIONS=1 \
+  --env MULTITIMER_STATE_PATH=/private/tmp/multitimer-bundle-test.json \
+  dist/MultiTimer.app
 ```
+
+不要直接执行 `dist/MultiTimer.app/Contents/MacOS/MultiTimer` 来启动 GUI。macOS 26 可能继承终端或自动化宿主的 XPC 身份，把 MultiTimer 的菜单栏项目错误登记到宿主应用名下并永久隐藏。应用自身也必须检测这种启动方式，并在创建状态栏项前通过 LaunchServices 重新启动。
 
 验证 CLI：
 
@@ -490,11 +494,15 @@ curl -fsSL https://echoforger.github.io/multi-timer/ \
 
 1. 确认没有同 Bundle ID 的重复进程。
 2. 确认 `LSUIElement=true` 且使用 Accessory activation policy。
-3. 不要为开发版与正式版复用容易损坏的 status item autosave name。
-4. 检查“系统设置 → 控制中心”中的菜单栏显示权限。
+3. 确认正式版使用稳定的 status item `autosaveName`，开发版使用独立名称；不要移除明确标识，也不要让两个环境复用同一个标识。
+4. 检查“系统设置 → 菜单栏 → 允许在菜单栏中”中的 MultiTimer 开关。
 5. 使用应用内状态栏自检和“重新创建图标”。
 
-如果应用进程、Socket 和计时器都正常，但图标仍消失，同时日志每 0.5 秒出现 Control Center `SceneFenceAction`，检查 `_refresh_status_item()` 是否在内容不变时仍调用 `setTitle_`、`setImagePosition_` 或 `setLength_`。状态项刷新必须使用内容签名缓存，只在显示文本或布局模式真正变化时更新。
+如果日志出现 `Created ephemeral instance`、`Moving host to blocked list` 和 `hiding status items`，优先检查状态栏项目是否缺少稳定 `autosaveName`。正式版必须使用稳定标识，开发版应使用另一个稳定标识。
+
+如果日志出现 `Adding menu item at .bundle(MultiTimer) to tracked application at .bundle(另一个应用)`，说明打包应用被直接执行并继承了父应用的 XPC 身份。GUI 必须通过 LaunchServices 启动；CLI 子命令仍可直接执行二进制。
+
+每 0.5 秒出现 Control Center `SceneFenceAction` 不一定来自状态栏标题；Popover 关闭时更新隐藏的计时器控件也会触发场景提交。关闭面板时只更新计时逻辑和菜单栏摘要，重新打开面板前再刷新行内容。
 
 ### URL Scheme 测试没有创建计时器
 

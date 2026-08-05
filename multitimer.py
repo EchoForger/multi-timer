@@ -3,15 +3,17 @@
 
 使用 AppKit (PyObjC) 原生组件:
 - 常驻菜单栏 NSStatusItem, 点击弹出 NSPopover (系统毛玻璃, 跟随深/浅色)
-- 原生 NSTextField / NSButton，以及跟随系统强调色的轻量进度条
+- 原生 NSSlider / NSTextField / NSButton, 跟随系统强调色
 - 不在 Dock 显示 (ActivationPolicy = Accessory)
-- 输入任务名 + 点预设时间即开始; 可并行多个倒计时
-- 预设可增删改, 本地持久化; 未填任务名时自动使用 "任务 N"
-- 每行带进度条和延时按钮; 任务名单行省略、可原生行内改名
+- 输入任务名 + 拉杆选择时长, 或直接填写目标时间即开始; 可并行多个倒计时
+- 每条记录只保存开始时间和结束时间; 未填任务名时自动使用 "任务 N"
+- 每行的剩余时间和目标时间都可点击直接编辑; 任务名单行省略、可原生行内改名
 - 到点由 MultiTimer.app 通过 UNUserNotificationCenter 发出可交互通知
   (点击 "已检查" 按钮 => 直接从列表中移除对应倒计时)
 """
 
+import datetime
+import fcntl
 import json
 import hashlib
 import math
@@ -37,7 +39,6 @@ from Foundation import (
     NSObject,
     NSTimer,
     NSMakeRect,
-    NSMakeSize,
     NSNotificationCenter,
     NSAppleEventManager,
     NSBundle,
@@ -82,19 +83,21 @@ from AppKit import (
     NSImageView,
     NSImageScaleProportionallyUpOrDown,
     NSStackView,
+    NSSlider,
     NSTextField,
     NSButton,
     NSAlert,
     NSBox,
     NSBoxSeparator,
     NSColor,
+    NSEventModifierFlagCommand,
+    NSEventModifierFlagShift,
     NSFont,
     NSFontWeightBold,
     NSFontWeightMedium,
     NSFontWeightSemibold,
     NSUserInterfaceLayoutOrientationVertical,
     NSUserInterfaceLayoutOrientationHorizontal,
-    NSStackViewDistributionFillEqually,
     NSLayoutConstraintOrientationHorizontal,
     NSLineBreakByTruncatingMiddle,
     NSMinYEdge,
@@ -123,7 +126,7 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.4.2"
+APP_VERSION = "0.5.0"
 # macOS 26 can retain a broken Control Center visibility record for a status
 # item even after the app is reinstalled.  Use a fresh, status-bar-specific
 # identity for the production app so upgrades are not tied to that stale entry.
@@ -146,13 +149,9 @@ STATE_PATH = Path(
 )
 PANEL_WIDTH = 296
 CONTROL_SOCKET_PATH = STATE_PATH.parent / "control.sock"
-DEFAULT_PRESETS = [
-    {"name": "1min", "seconds": 60},
-    {"name": "5min", "seconds": 300},
-    {"name": "10min", "seconds": 600},
-    {"name": "15min", "seconds": 900},
-    {"name": "30min", "seconds": 1800},
-]
+CONTROL_LOCK_PATH = STATE_PATH.parent / "control.lock"
+MAX_DURATION_SECONDS = 24 * 3600
+DEFAULT_DURATION_SECONDS = 300
 
 DEFAULT_SETTINGS = {
     "show_remaining": False,
@@ -162,23 +161,24 @@ DEFAULT_SETTINGS = {
 
 STRINGS = {
     "zh": {
-        "timer_name": "计时名称（可选）", "quick_start": "快速开始", "edit": "编辑",
-        "custom": "自定义", "minutes": "分钟", "start": "开始", "stopwatch": "秒表",
+        "timer_name": "计时名称（可选）", "duration": "时长", "ends_at": "结束",
+        "target_time": "目标时间", "start": "开始", "stopwatch": "秒表",
         "empty": "暂无进行中的计时器", "running": "进行中 · {count}",
         "task": "任务 {number}", "rename_tip": "双击或用力按压以重命名",
+        "edit_remaining_tip": "点击编辑剩余时间，例如 16 表示 16 分钟",
+        "edit_target_tip": "点击编辑目标时间，例如 21:30",
         "restart": "重新计时", "checked": "✓ 已检查", "finished": "已结束",
         "pause": "暂停", "resume": "继续", "lap": "计圈", "laps": "{count} 圈 · 最近 {latest}",
-        "duplicate": "复制", "decrease": "减少", "pin": "置顶", "unpin": "取消置顶",
+        "duplicate": "复制", "pin": "置顶", "unpin": "取消置顶",
         "settings": "设置", "quit": "退出 MultiTimer", "about": "关于 MultiTimer",
         "notification_denied": "通知已关闭，计时结束时可能无法提醒。", "open_settings": "打开系统设置",
         "settings_title": "MultiTimer 设置", "launch_at_login": "登录时自动启动",
         "show_remaining": "菜单栏显示最近剩余时间", "show_count": "菜单栏显示计时器数量",
         "sort_by_expiry": "最近到期优先", "language": "应用语言",
         "language_detail": "由 macOS 管理。", "open_language_settings": "系统设置…",
-        "back": "返回", "save": "保存", "cancel": "取消",
+        "back": "返回",
         "time_up_body": "时间到，点击“已检查”移除", "time_up": "时间到",
-        "confirm_finish": "剩余时间将变为零", "confirm_finish_detail": "要立即结束“{name}”吗？",
-        "finish_now": "立即结束", "status_hidden": "菜单栏图标没有显示",
+        "status_hidden": "菜单栏图标没有显示",
         "status_hidden_detail": "MultiTimer 已尝试恢复图标。若仍未显示，请在系统设置的控制中心中允许 MultiTimer 显示在菜单栏。",
         "retry": "重新创建图标", "later": "稍后", "notification_request": "允许通知",
         "source": "安装来源：{source}", "version": "版本 {version}", "development": "开发模式", "unknown": "未知",
@@ -192,26 +192,27 @@ STRINGS = {
         "update_now": "立即更新", "skip_version": "跳过这个版本", "brew_will_run": "Homebrew 将在后台运行：",
         "update_failed": "更新未完成", "release_page": "打开 Release 页", "update_installed": "更新已安装",
         "update_installed_detail": "MultiTimer {version} 已通过 {source} 安装完成。重新启动后生效。",
-        "restart_now": "现在重新启动", "edit_presets": "编辑预设", "preset_help": "每行一个：名称=分钟（例如 5min=5）",
+        "restart_now": "现在重新启动",
     },
     "en": {
-        "timer_name": "Timer name (optional)", "quick_start": "Quick Start", "edit": "Edit",
-        "custom": "Custom", "minutes": "min", "start": "Start", "stopwatch": "Stopwatch",
+        "timer_name": "Timer name (optional)", "duration": "Duration", "ends_at": "Ends",
+        "target_time": "Target time", "start": "Start", "stopwatch": "Stopwatch",
         "empty": "No active timers", "running": "Active · {count}",
         "task": "Timer {number}", "rename_tip": "Double-click or Force Click to rename",
+        "edit_remaining_tip": "Click to edit the remaining time, e.g. 16 means 16 minutes",
+        "edit_target_tip": "Click to edit the target time, e.g. 21:30",
         "restart": "Restart", "checked": "✓ Done", "finished": "Finished",
         "pause": "Pause", "resume": "Resume", "lap": "Lap", "laps": "{count} laps · latest {latest}",
-        "duplicate": "Duplicate", "decrease": "Reduce", "pin": "Pin", "unpin": "Unpin",
+        "duplicate": "Duplicate", "pin": "Pin", "unpin": "Unpin",
         "settings": "Settings", "quit": "Quit MultiTimer", "about": "About MultiTimer",
         "notification_denied": "Notifications are off, so completed timers may not alert you.", "open_settings": "Open Settings",
         "settings_title": "MultiTimer Settings", "launch_at_login": "Launch at Login",
         "show_remaining": "Show nearest remaining time", "show_count": "Show active timer count",
         "sort_by_expiry": "Sort by nearest expiry", "language": "App Language",
         "language_detail": "Managed by macOS.", "open_language_settings": "System Settings…",
-        "back": "Back", "save": "Save", "cancel": "Cancel",
+        "back": "Back",
         "time_up_body": "Time is up. Click Done to remove it.", "time_up": "Time's up",
-        "confirm_finish": "The remaining time will reach zero", "confirm_finish_detail": "Finish “{name}” now?",
-        "finish_now": "Finish Now", "status_hidden": "Menu bar icon is not visible",
+        "status_hidden": "Menu bar icon is not visible",
         "status_hidden_detail": "MultiTimer tried to restore its icon. If it is still missing, allow MultiTimer in System Settings > Control Center.",
         "retry": "Recreate Icon", "later": "Later", "notification_request": "Allow Notifications",
         "source": "Install source: {source}", "version": "Version {version}", "development": "Development", "unknown": "Unknown",
@@ -225,7 +226,7 @@ STRINGS = {
         "update_now": "Update Now", "skip_version": "Skip This Version", "brew_will_run": "Homebrew will run in the background:",
         "update_failed": "Update Not Completed", "release_page": "Open Release Page", "update_installed": "Update Installed",
         "update_installed_detail": "MultiTimer {version} was installed via {source}. Restart to use it.",
-        "restart_now": "Restart Now", "edit_presets": "Edit Presets", "preset_help": "One per line: name=minutes (for example 5min=5)",
+        "restart_now": "Restart Now",
     },
 }
 
@@ -270,9 +271,10 @@ def _parse_multitimer_url(value: str) -> dict:
             seconds = float(query.get("minutes", [0])[0]) * 60
     except (TypeError, ValueError):
         seconds = 0
-    if seconds <= 0:
-        raise ValueError("A positive minutes or seconds value is required")
-    return {"command": "start", "kind": "countdown", "name": name, "seconds": int(round(seconds))}
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError("A positive finite minutes or seconds value is required")
+    seconds = min(MAX_DURATION_SECONDS, int(round(seconds)))
+    return {"command": "start", "kind": "countdown", "name": name, "seconds": seconds}
 
 
 def resource_path(relative: str) -> Path:
@@ -294,10 +296,12 @@ def _version_tuple(value: str) -> tuple:
 
 
 def _release_version(release: dict) -> str:
+    """Return a release tag without its optional v prefix."""
     return str(release.get("tag_name", "")).strip().lstrip("vV")
 
 
 def _select_dmg_asset(release: dict) -> dict:
+    """Select the versioned DMG asset from a GitHub release."""
     version = _release_version(release)
     assets = release.get("assets") or []
     expected = f"MultiTimer-{version}.dmg"
@@ -406,6 +410,7 @@ def _fetch_latest_release() -> dict:
 
 
 def _current_app_bundle_path():
+    """Return the enclosing app bundle for a frozen executable."""
     if not getattr(sys, "frozen", False):
         return None
     executable = Path(sys.executable).resolve()
@@ -455,6 +460,7 @@ def _relaunch_via_launchservices_if_needed() -> bool:
 
 
 def _find_brew():
+    """Find Homebrew outside the limited GUI application PATH."""
     candidates = [shutil.which("brew"), "/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
     return next((str(Path(item)) for item in candidates if item and Path(item).is_file()), None)
 
@@ -538,6 +544,7 @@ def _best_installed_bundle_path():
 
 
 def _run_checked(command, timeout, error_title):
+    """Run a command and raise a readable error when it fails."""
     result = subprocess.run(
         command,
         capture_output=True,
@@ -700,65 +707,225 @@ def fmt_duration(seconds: float) -> str:
     return fmt_remaining(seconds)
 
 
+def fmt_clock_time(timestamp: float) -> str:
+    """Format an absolute timestamp as a local 24-hour HH:MM label."""
+    return time.strftime("%H:%M", time.localtime(float(timestamp)))
+
+
+def parse_duration_text(text: str) -> int:
+    """Parse a typed length into seconds.
+
+    A bare number is minutes, so typing 16 over "01:00" gives 16:00. Two
+    colon-separated parts are MM:SS and three are HH:MM:SS.
+    """
+    cleaned = str(text).replace("：", ":").replace(" ", "").strip()
+    if not cleaned:
+        raise ValueError("Duration is empty")
+    parts = cleaned.split(":")
+    if len(parts) > 3 or any(not part for part in parts):
+        raise ValueError("Duration must look like 16, 16:30, or 1:16:30")
+    try:
+        values = [float(part) for part in parts]
+    except ValueError as exc:
+        raise ValueError("Duration must contain numbers only") from exc
+    if any(not math.isfinite(value) for value in values):
+        raise ValueError("Duration must contain finite numbers only")
+    if any(value < 0 for value in values):
+        raise ValueError("Duration must not be negative")
+    if len(values) == 1:
+        seconds = values[0] * 60
+    elif len(values) == 2:
+        seconds = values[0] * 60 + values[1]
+    else:
+        seconds = values[0] * 3600 + values[1] * 60 + values[2]
+    return min(MAX_DURATION_SECONDS, int(round(seconds)))
+
+
+def parse_clock_text(text: str, now: float) -> float:
+    """Parse a typed 24-hour time into the next matching absolute timestamp."""
+    cleaned = str(text).replace("：", ":").replace(" ", "").strip()
+    if not cleaned:
+        raise ValueError("Target time is empty")
+    parts = cleaned.split(":")
+    if len(parts) == 1:
+        digits = parts[0]
+        if not digits.isdigit():
+            raise ValueError("Target time must look like 21:30")
+        if len(digits) <= 2:
+            hour, minute = int(digits), 0
+        elif len(digits) <= 4:
+            hour, minute = int(digits[:-2]), int(digits[-2:])
+        else:
+            raise ValueError("Target time must look like 21:30")
+    elif len(parts) == 2 and all(part.isdigit() for part in parts):
+        hour, minute = int(parts[0]), int(parts[1])
+    else:
+        raise ValueError("Target time must look like 21:30")
+    if hour > 23 or minute > 59:
+        raise ValueError("Target time is outside 00:00-23:59")
+    base = datetime.datetime.fromtimestamp(now)
+    target = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target.timestamp() <= now:
+        target += datetime.timedelta(days=1)
+    return target.timestamp()
+
+
+# ---------------------------------------------------------------------------
+# 每条记录只保存开始时间与结束时间, 其余状态都由它们推导
+# ---------------------------------------------------------------------------
+def timer_is_paused(timer: dict) -> bool:
+    return float(timer.get("paused_at") or 0) > 0
+
+
+def timer_reference_time(timer: dict) -> float:
+    """Return the moment a paused timer froze at, or the current time."""
+    return float(timer.get("paused_at") or 0) or time.time()
+
+
+def timer_remaining(timer: dict) -> float:
+    if timer.get("kind", "countdown") != "countdown":
+        return 0.0
+    return max(0.0, float(timer.get("end_ts") or 0) - timer_reference_time(timer))
+
+
+def timer_elapsed(timer: dict) -> float:
+    return max(0.0, timer_reference_time(timer) - float(timer.get("start_ts") or 0))
+
+
+def timer_duration(timer: dict) -> float:
+    if timer.get("kind", "countdown") != "countdown":
+        return 0.0
+    return max(0.0, float(timer.get("end_ts") or 0) - float(timer.get("start_ts") or 0))
+
+
+def timer_display_seconds(timer: dict) -> float:
+    return timer_elapsed(timer) if timer.get("kind") == "stopwatch" else timer_remaining(timer)
+
+
 _NOTIF_CATEGORY = "TIMER_DONE"
 _NOTIF_ACTION_CHECK = "MARK_CHECKED"
 
 
+def _normalise_timer(raw: dict, now: float) -> dict:
+    """Convert any stored record into the start/end representation."""
+    timer = {
+        "id": str(raw.get("id") or uuid.uuid4().hex),
+        "label": str(raw.get("label") or ""),
+        "kind": "stopwatch" if raw.get("kind") == "stopwatch" else "countdown",
+        "pinned": bool(raw.get("pinned")),
+        "finished": bool(raw.get("finished")),
+        "laps": [float(value) for value in (raw.get("laps") or [])],
+    }
+    paused_at = float(raw.get("paused_at") or 0)
+    paused = paused_at > 0 or bool(raw.get("paused"))
+    if timer["kind"] == "stopwatch":
+        if "elapsed_before" in raw and paused_at <= 0:
+            elapsed = float(raw.get("elapsed_before") or 0)
+            if not paused:
+                elapsed += max(0.0, now - float(raw.get("start_ts") or now))
+            start_ts = now - elapsed
+        else:
+            start_ts = float(raw.get("start_ts") or now)
+        timer.update({
+            "start_ts": start_ts,
+            "end_ts": 0.0,
+            "paused_at": paused_at or (now if paused else 0.0),
+        })
+        return timer
+    end_ts = float(raw.get("end_ts") or 0)
+    duration = float(raw.get("duration") or 0)
+    start_ts = float(raw.get("start_ts") or 0)
+    if paused and paused_at <= 0 and "paused_remaining" in raw:
+        # Older files froze the remaining time instead of the pause moment, so
+        # their end_ts is stale and the length has to come from duration.
+        end_ts = now + max(0.0, float(raw.get("paused_remaining") or 0))
+        paused_at = now
+        start_ts = end_ts - duration if duration > 0 else 0.0
+    if start_ts <= 0:
+        start_ts = float(raw.get("created_ts") or 0) or end_ts - duration
+    timer.update({
+        "start_ts": min(start_ts, end_ts),
+        "end_ts": end_ts,
+        "paused_at": paused_at or (now if paused else 0.0),
+    })
+    return timer
+
+
 def load_state() -> dict:
+    """Load valid persisted state while isolating damaged records."""
+    default = {"timers": [], "settings": dict(DEFAULT_SETTINGS), "skipped_update": ""}
     if not STATE_PATH.exists():
-        return {
-            "presets": [dict(p) for p in DEFAULT_PRESETS], "timers": [],
-            "settings": dict(DEFAULT_SETTINGS), "skipped_update": "",
-        }
+        return default
     try:
         data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {
-            "presets": [dict(p) for p in DEFAULT_PRESETS], "timers": [],
-            "settings": dict(DEFAULT_SETTINGS), "skipped_update": "",
-        }
-    presets = data.get("presets") or [dict(p) for p in DEFAULT_PRESETS]
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return default
+    if not isinstance(data, dict):
+        return default
     now = time.time()
     timers = []
-    for raw in data.get("timers", []):
-        timer = dict(raw)
-        timer.setdefault("kind", "countdown")
-        timer.setdefault("duration", 0)
-        timer.setdefault("pinned", False)
-        timer.setdefault("paused", False)
-        timer.setdefault("finished", False)
-        timer.setdefault("created_ts", now)
-        timer.setdefault("laps", [])
+    raw_timers = data.get("timers", [])
+    if not isinstance(raw_timers, list):
+        raw_timers = []
+    for raw in raw_timers:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            timer = _normalise_timer(raw, now)
+        except (TypeError, ValueError, OverflowError):
+            continue
         if timer["kind"] == "stopwatch":
-            timer.setdefault("elapsed_before", 0.0)
-            timer.setdefault("start_ts", now)
             timers.append(timer)
-        elif timer.get("paused") or timer.get("finished") or timer.get("end_ts", 0) > now:
+        elif timer_is_paused(timer) or timer["finished"] or timer["end_ts"] > now:
             timers.append(timer)
-    skipped_update = str(data.get("skipped_update") or "")
     settings = dict(DEFAULT_SETTINGS)
-    settings.update({k: v for k, v in (data.get("settings") or {}).items() if k in settings})
-    return {"presets": presets, "timers": timers, "settings": settings, "skipped_update": skipped_update}
+    raw_settings = data.get("settings") or {}
+    if isinstance(raw_settings, dict):
+        settings.update({key: value for key, value in raw_settings.items() if key in settings})
+    return {
+        "timers": timers,
+        "settings": settings,
+        "skipped_update": str(data.get("skipped_update") or ""),
+    }
 
 
 def _persistent_timer(timer: dict) -> dict:
     keys = (
-        "id", "label", "kind", "duration", "end_ts", "created_ts", "pinned",
-        "paused", "paused_remaining", "finished", "start_ts", "elapsed_before", "laps",
+        "id", "label", "kind", "start_ts", "end_ts", "paused_at",
+        "pinned", "finished", "laps",
     )
     return {key: timer[key] for key in keys if key in timer}
 
 
-def save_state(presets: list, timers: list, skipped_update="", settings=None) -> None:
+def save_state(timers: list, skipped_update="", settings=None) -> None:
+    """Atomically persist state without exposing a partial JSON document."""
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schema_version": 2,
-        "presets": presets,
-        "timers": [_persistent_timer(t) for t in timers],
+        "schema_version": 3,
+        "timers": [_persistent_timer(timer) for timer in timers],
         "skipped_update": skipped_update,
         "settings": dict(settings or DEFAULT_SETTINGS),
     }
-    STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=STATE_PATH.parent,
+            prefix=f".{STATE_PATH.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary_path = Path(stream.name)
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, STATE_PATH)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -792,6 +959,7 @@ class _ControlServer(socketserver.ThreadingUnixStreamServer):
 
 
 def _send_cli_request(request: dict, launch=True) -> dict:
+    """Send one request to the local menu-bar instance."""
     def attempt():
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(3)
@@ -847,10 +1015,17 @@ def _run_cli(argv: list) -> int:
                 return 2
             try:
                 minutes = float(args[-1])
-            except ValueError:
-                print("the last start argument must be MINUTES", file=sys.stderr)
+                if not math.isfinite(minutes) or minutes <= 0:
+                    raise ValueError
+                seconds = min(MAX_DURATION_SECONDS, int(round(minutes * 60)))
+            except (ValueError, OverflowError):
+                print("the last start argument must be positive finite MINUTES", file=sys.stderr)
                 return 2
-            request.update({"kind": "countdown", "name": " ".join(args[:-1]).strip(), "seconds": int(round(minutes * 60))})
+            request.update({
+                "kind": "countdown",
+                "name": " ".join(args[:-1]).strip(),
+                "seconds": seconds,
+            })
     elif command in {"pause", "cancel"}:
         if len(argv) < 2:
             print(f"{command} requires an ID or name", file=sys.stderr)
@@ -880,7 +1055,34 @@ def _run_cli(argv: list) -> int:
     return 0
 
 
-class _RenameTextField(NSTextField):
+_EDIT_KEY_SELECTORS = {
+    "x": "cut:",
+    "c": "copy:",
+    "v": "paste:",
+    "a": "selectAll:",
+    "z": "undo:",
+}
+
+
+class _EditableTextField(NSTextField):
+    """Text field that resolves ⌘X/⌘C/⌘V/⌘A/⌘Z on its own.
+
+    A menu-bar app has no visible main menu, so AppKit does not route those
+    key equivalents to the field editor while a popover field is being edited.
+    """
+
+    def performKeyEquivalent_(self, event):
+        if event.modifierFlags() & NSEventModifierFlagCommand and self.currentEditor() is not None:
+            key = str(event.charactersIgnoringModifiers() or "").lower()
+            selector = _EDIT_KEY_SELECTORS.get(key)
+            if key == "z" and event.modifierFlags() & NSEventModifierFlagShift:
+                selector = "redo:"
+            if selector and NSApp.sendAction_to_from_(selector, None, self):
+                return True
+        return objc.super(_EditableTextField, self).performKeyEquivalent_(event)
+
+
+class _RenameTextField(_EditableTextField):
     """Single-line label that starts native inline editing on macOS gestures."""
 
     def initWithFrame_(self, frame):
@@ -921,6 +1123,33 @@ class _RenameTextField(NSTextField):
         objc.super(_RenameTextField, self).pressureChangeWithEvent_(event)
 
 
+def _set_inline_editing(field, enabled):
+    """Apply the shared native appearance for an inline text editor."""
+    field.setEditable_(enabled)
+    field.setSelectable_(enabled)
+    field.setBezeled_(enabled)
+    field.setDrawsBackground_(enabled)
+    field.setFocusRingType_(NSFocusRingTypeDefault if enabled else NSFocusRingTypeNone)
+    if enabled:
+        window = field.window()
+        if window is not None:
+            window.makeFirstResponder_(field)
+        field.selectText_(None)
+
+
+def _handle_inline_editor_command(controller, control, command):
+    """Handle Escape and Return consistently for inline editors."""
+    command_name = command.decode("ascii") if isinstance(command, bytes) else str(command)
+    if command_name == "cancelOperation:":
+        controller._cancel_requested = True
+        control.window().makeFirstResponder_(None)
+        return True
+    if command_name in {"insertNewline:", "insertLineBreak:"}:
+        control.window().makeFirstResponder_(None)
+        return True
+    return False
+
+
 class _RenameController(NSObject):
     """Own the lifecycle of one timer's inline NSTextField editor."""
 
@@ -942,15 +1171,7 @@ class _RenameController(NSObject):
         self._editing = True
         self._cancel_requested = False
         self._original = self._timer["label"]
-        self._field.setEditable_(True)
-        self._field.setSelectable_(True)
-        self._field.setBezeled_(True)
-        self._field.setDrawsBackground_(True)
-        self._field.setFocusRingType_(NSFocusRingTypeDefault)
-        window = self._field.window()
-        if window is not None:
-            window.makeFirstResponder_(self._field)
-        self._field.selectText_(None)
+        _set_inline_editing(self._field, True)
 
     def _finish(self):
         if not self._editing:
@@ -961,11 +1182,7 @@ class _RenameController(NSObject):
         self._timer["label"] = value
         self._field.setStringValue_(value)
         self._field.setToolTip_(f"{value}\n{self._owner.tr('rename_tip')}")
-        self._field.setEditable_(False)
-        self._field.setSelectable_(False)
-        self._field.setBezeled_(False)
-        self._field.setDrawsBackground_(False)
-        self._field.setFocusRingType_(NSFocusRingTypeNone)
+        _set_inline_editing(self._field, False)
         self._editing = False
         self._cancel_requested = False
         self._owner._persist()
@@ -974,15 +1191,70 @@ class _RenameController(NSObject):
         self._finish()
 
     def control_textView_doCommandBySelector_(self, control, _text_view, command):
-        command_name = command.decode("ascii") if isinstance(command, bytes) else str(command)
-        if command_name == "cancelOperation:":
-            self._cancel_requested = True
-            control.window().makeFirstResponder_(None)
-            return True
-        if command_name in {"insertNewline:", "insertLineBreak:"}:
-            control.window().makeFirstResponder_(None)
-            return True
-        return False
+        return _handle_inline_editor_command(self, control, command)
+
+
+class _TimeField(_EditableTextField):
+    """Time label that turns into a native editor on a single click."""
+
+    def initWithFrame_(self, frame):
+        self = objc.super(_TimeField, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self._time_controller = None
+        return self
+
+    def setTimeController_(self, controller):
+        self._time_controller = controller
+
+    def mouseDown_(self, event):
+        if self._time_controller is not None and not self.isEditable():
+            self._time_controller.begin()
+            return
+        objc.super(_TimeField, self).mouseDown_(event)
+
+
+class _TimeEditController(NSObject):
+    """Own one inline time editor and commit its text through a callback."""
+
+    def initWithField_commit_(self, field, commit):
+        self = objc.super(_TimeEditController, self).init()
+        if self is None:
+            return None
+        self._field = field
+        self._commit = commit
+        self._editing = False
+        self._cancel_requested = False
+        self._original = field.stringValue()
+        return self
+
+    def editing(self):
+        return self._editing
+
+    def begin(self):
+        if self._editing:
+            return
+        self._editing = True
+        self._cancel_requested = False
+        self._original = self._field.stringValue()
+        _set_inline_editing(self._field, True)
+
+    def _finish(self):
+        if not self._editing:
+            return
+        text = self._field.stringValue()
+        self._editing = False
+        cancelled = self._cancel_requested
+        self._cancel_requested = False
+        _set_inline_editing(self._field, False)
+        if cancelled or not self._commit(text):
+            self._field.setStringValue_(self._original)
+
+    def controlTextDidEndEditing_(self, _notification):
+        self._finish()
+
+    def control_textView_doCommandBySelector_(self, control, _text_view, command):
+        return _handle_inline_editor_command(self, control, command)
 
 
 class _CardView(NSView):
@@ -1015,47 +1287,6 @@ class _CardView(NSView):
         else:
             color = color.colorWithAlphaComponent_(0.82)
         self.layer().setBackgroundColor_(color.CGColor())
-
-
-class _ProgressView(NSView):
-    """Compact progress bar that follows the macOS system accent color."""
-
-    def init(self):
-        self = objc.super(_ProgressView, self).init()
-        if self is None:
-            return None
-        self._value = 0.0
-        self.setWantsLayer_(True)
-        self.layer().setCornerRadius_(2.0)
-        self.layer().setMasksToBounds_(True)
-        self._fill = NSView.alloc().init()
-        self._fill.setWantsLayer_(True)
-        self._fill.layer().setCornerRadius_(2.0)
-        self.addSubview_(self._fill)
-        self.refreshAccent()
-        return self
-
-    def intrinsicContentSize(self):
-        return NSMakeSize(-1.0, 4.0)
-
-    def setDoubleValue_(self, value):
-        self._value = max(0.0, min(1000.0, float(value)))
-        self.setNeedsLayout_(True)
-
-    def layout(self):
-        objc.super(_ProgressView, self).layout()
-        bounds = self.bounds()
-        width = bounds.size.width * (self._value / 1000.0)
-        self._fill.setFrame_(NSMakeRect(0, 0, width, bounds.size.height))
-
-    def viewDidChangeEffectiveAppearance(self):
-        objc.super(_ProgressView, self).viewDidChangeEffectiveAppearance()
-        self.refreshAccent()
-
-    def refreshAccent(self):
-        track = NSColor.separatorColor().colorWithAlphaComponent_(0.55)
-        self.layer().setBackgroundColor_(track.CGColor())
-        self._fill.layer().setBackgroundColor_(NSColor.controlAccentColor().CGColor())
 
 
 # ---------------------------------------------------------------------------
@@ -1114,18 +1345,20 @@ class MultiTimerApp(NSObject):
         if self is None:
             return None
         state = load_state()
-        self.presets = state["presets"]
         self._initial_timers = state["timers"]
         self._skipped_update = state["skipped_update"]
         self.settings = state["settings"]
         self.language = _language_for_settings(self.settings)
-        self.timers = []          # dict: id/label/end_ts/duration/view/name/progress/actions
+        self.timers = []          # dict: id/label/start_ts/end_ts/view/name/remaining
         self._retain = []         # 全局 target 保活
         self._closed_at = 0.0
         self._did_finish_launching = False
         self._update_in_progress = False
         self._control_server = None
+        self._control_lock = None
+        self._control_socket_identity = None
         self._status_signature = None
+        self._pending_seconds = DEFAULT_DURATION_SECONDS
         return self
 
     @objc.python_method
@@ -1223,8 +1456,8 @@ class MultiTimerApp(NSObject):
         if self.settings.get("show_remaining") and active:
             countdowns = [t for t in active if t.get("kind", "countdown") == "countdown"]
             if countdowns:
-                nearest = min(countdowns, key=lambda item: self._timer_remaining(item))
-                parts.append(fmt_status_remaining(self._timer_remaining(nearest)))
+                nearest = min(countdowns, key=timer_remaining)
+                parts.append(fmt_status_remaining(timer_remaining(nearest)))
         if self.settings.get("show_count"):
             parts.append(str(len(active)))
         title = " · ".join(parts)
@@ -1286,15 +1519,37 @@ class MultiTimerApp(NSObject):
     def _start_control_server(self):
         try:
             STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            lock_stream = CONTROL_LOCK_PATH.open("a+")
+            try:
+                fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                lock_stream.close()
+                self._control_server = None
+                return
+            self._control_lock = lock_stream
             if CONTROL_SOCKET_PATH.exists():
-                CONTROL_SOCKET_PATH.unlink()
+                try:
+                    _send_cli_request({"command": "list"}, launch=False)
+                except RuntimeError:
+                    CONTROL_SOCKET_PATH.unlink()
+                else:
+                    lock_stream.close()
+                    self._control_lock = None
+                    self._control_server = None
+                    return
             server = _ControlServer(str(CONTROL_SOCKET_PATH), _ControlHandler)
             server.app = self
             os.chmod(CONTROL_SOCKET_PATH, 0o600)
+            socket_stat = CONTROL_SOCKET_PATH.stat()
+            self._control_lock = lock_stream
+            self._control_socket_identity = (socket_stat.st_dev, socket_stat.st_ino)
             self._control_server = server
             threading.Thread(target=server.serve_forever, daemon=True).start()
-        except Exception:
+        except (OSError, RuntimeError):
             self._control_server = None
+            if getattr(self, "_control_lock", None) is not None:
+                self._control_lock.close()
+                self._control_lock = None
 
     def handle_cli_request(self, request):
         result = {}
@@ -1340,7 +1595,7 @@ class MultiTimerApp(NSObject):
             for timer in self.timers:
                 rows.append({
                     "id": timer["id"], "label": timer["label"], "kind": timer.get("kind", "countdown"),
-                    "paused": timer.get("paused", False), "time": fmt_remaining(self._timer_display_seconds(timer)),
+                    "paused": timer_is_paused(timer), "time": fmt_remaining(timer_display_seconds(timer)),
                 })
             return {"ok": True, "timers": rows}
         if command in {"pause", "cancel"}:
@@ -1732,54 +1987,65 @@ class MultiTimerApp(NSObject):
         self._fill_width(header)
 
         # 新建计时器
-        self.input_field = NSTextField.textFieldWithString_("")
+        self.input_field = _EditableTextField.alloc().initWithFrame_(
+            NSMakeRect(0, 0, PANEL_WIDTH, 25)
+        )
         self.input_field.setPlaceholderString_(self.tr("timer_name"))
         self.input_field.setFont_(NSFont.systemFontOfSize_(12))
         self.input_field.heightAnchor().constraintEqualToConstant_(25).setActive_(True)
         root.addArrangedSubview_(self.input_field)
         self._fill_width(self.input_field)
 
-        # 快速开始
-        presets_header = _hstack(6)
-        presets_header.addArrangedSubview_(_section_label(self.tr("quick_start")))
-        preset_spacer = NSView.alloc().init()
-        presets_header.addArrangedSubview_(preset_spacer)
-        preset_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
-        edit_btn = _button(self.tr("edit"), lambda s: self._edit_presets(), self._retain, small=True, quiet=True)
-        presets_header.addArrangedSubview_(edit_btn)
-        root.addArrangedSubview_(presets_header)
-        self._fill_width(presets_header)
+        # 时长拉杆 (0 - 24h) + 目标时间
+        composer_card = _CardView.alloc().init()
+        composer = _vstack(6)
 
-        self.presets_stack = _vstack(4)
-        root.addArrangedSubview_(self.presets_stack)
-        self._fill_width(self.presets_stack)
-        self._rebuild_presets()
+        duration_row = _hstack(7)
+        duration_label = NSTextField.labelWithString_(self.tr("duration"))
+        duration_label.setFont_(NSFont.systemFontOfSize_weight_(11.5, NSFontWeightMedium))
+        duration_row.addArrangedSubview_(duration_label)
+        self.duration_slider = NSSlider.alloc().init()
+        self.duration_slider.setMinValue_(0.0)
+        self.duration_slider.setMaxValue_(float(MAX_DURATION_SECONDS // 60))
+        self.duration_slider.setDoubleValue_(self._pending_seconds / 60.0)
+        self.duration_slider.setControlSize_(NSControlSizeSmall)
+        slider_action = _Action.alloc().initWithCallback_(lambda sender: self._slider_changed(sender))
+        self._retain.append(slider_action)
+        self.duration_slider.setTarget_(slider_action)
+        self.duration_slider.setAction_("invoke:")
+        self.duration_slider.setContinuous_(True)
+        duration_row.addArrangedSubview_(self.duration_slider)
+        self.duration_field = self._make_value_field(
+            fmt_remaining(self._pending_seconds), 62, lambda sender: self._duration_field_changed(sender)
+        )
+        duration_row.addArrangedSubview_(self.duration_field)
+        composer.addArrangedSubview_(duration_row)
 
-        # 自定义时长卡片
-        custom_card = _CardView.alloc().init()
-        tools = _hstack(5)
-        custom_label = NSTextField.labelWithString_(self.tr("custom"))
-        custom_label.setFont_(NSFont.systemFontOfSize_weight_(11.5, NSFontWeightMedium))
-        tools.addArrangedSubview_(custom_label)
-        tools_spacer = NSView.alloc().init()
-        tools.addArrangedSubview_(tools_spacer)
-        tools_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
-        self.custom_field = NSTextField.textFieldWithString_("5")
-        self.custom_field.setAlignment_(1)
-        cf_w = self.custom_field.widthAnchor().constraintEqualToConstant_(44)
-        cf_w.setActive_(True)
-        min_lbl = NSTextField.labelWithString_(self.tr("minutes"))
-        min_lbl.setTextColor_(NSColor.secondaryLabelColor())
+        target_row = _hstack(7)
+        target_label = NSTextField.labelWithString_(self.tr("target_time"))
+        target_label.setFont_(NSFont.systemFontOfSize_weight_(11.5, NSFontWeightMedium))
+        target_row.addArrangedSubview_(target_label)
+        self.target_field = self._make_value_field(
+            fmt_clock_time(time.time() + self._pending_seconds), 58,
+            lambda sender: self._target_field_changed(sender),
+        )
+        target_row.addArrangedSubview_(self.target_field)
+        target_spacer = NSView.alloc().init()
+        target_row.addArrangedSubview_(target_spacer)
+        target_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
         stopwatch_btn = _button(self.tr("stopwatch"), lambda s: self._start_stopwatch(), self._retain, small=True)
-        add_btn = _button(self.tr("start"), lambda s: self._start_custom(), self._retain, accent=True, small=True)
-        tools.addArrangedSubview_(self.custom_field)
-        tools.addArrangedSubview_(min_lbl)
-        tools.addArrangedSubview_(stopwatch_btn)
-        tools.addArrangedSubview_(add_btn)
-        self.custom_field.heightAnchor().constraintEqualToConstant_(22).setActive_(True)
-        _embed_with_insets(custom_card, tools, top=5, right=7, bottom=5, left=9)
-        root.addArrangedSubview_(custom_card)
-        self._fill_width(custom_card)
+        target_row.addArrangedSubview_(stopwatch_btn)
+        start_btn = _button(self.tr("start"), lambda s: self._start_pending(), self._retain, accent=True, small=True)
+        target_row.addArrangedSubview_(start_btn)
+        composer.addArrangedSubview_(target_row)
+
+        _embed_with_insets(composer_card, composer, top=7, right=8, bottom=7, left=9)
+        root.addArrangedSubview_(composer_card)
+        self._fill_width(composer_card)
+        duration_row.leadingAnchor().constraintEqualToAnchor_(composer.leadingAnchor()).setActive_(True)
+        duration_row.trailingAnchor().constraintEqualToAnchor_(composer.trailingAnchor()).setActive_(True)
+        target_row.leadingAnchor().constraintEqualToAnchor_(composer.leadingAnchor()).setActive_(True)
+        target_row.trailingAnchor().constraintEqualToAnchor_(composer.trailingAnchor()).setActive_(True)
 
         # 进行中标题 + 列表
         # Notification permission guidance stays compact and appears only when needed.
@@ -1823,69 +2089,64 @@ class MultiTimerApp(NSObject):
         view.leadingAnchor().constraintEqualToAnchor_(self.root_stack.leadingAnchor()).setActive_(True)
         view.trailingAnchor().constraintEqualToAnchor_(self.root_stack.trailingAnchor()).setActive_(True)
 
-    # -- 预设 --------------------------------------------------------------
-    def _rebuild_presets(self):
-        for sub in list(self.presets_stack.arrangedSubviews()):
-            self.presets_stack.removeArrangedSubview_(sub)
-            sub.removeFromSuperview()
-        row = None
-        for i, p in enumerate(self.presets):
-            if i % 3 == 0:
-                row = _hstack(5)
-                row.setDistribution_(NSStackViewDistributionFillEqually)
-                self.presets_stack.addArrangedSubview_(row)
-                self._fill_width(row)
-            btn = _button(p["name"], self._make_start_cb(p["seconds"]), self._retain, small=True)
-            btn.heightAnchor().constraintEqualToConstant_(23).setActive_(True)
-            row.addArrangedSubview_(btn)
+    # -- 时长拉杆与目标时间 -------------------------------------------------
+    def _make_value_field(self, text, width, callback):
+        field = _EditableTextField.alloc().initWithFrame_(NSMakeRect(0, 0, width, 22))
+        field.setStringValue_(text)
+        field.setAlignment_(1)
+        field.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(11.5, NSFontWeightMedium))
+        field.widthAnchor().constraintEqualToConstant_(width).setActive_(True)
+        field.heightAnchor().constraintEqualToConstant_(22).setActive_(True)
+        action = _Action.alloc().initWithCallback_(callback)
+        self._retain.append(action)
+        field.setTarget_(action)
+        field.setAction_("invoke:")
+        return field
 
-    def _make_start_cb(self, seconds):
-        return lambda s: self._start_timer(seconds)
+    @staticmethod
+    def _snap_minutes(minutes):
+        """Keep the 24-hour slider usable: finer steps for shorter timers."""
+        if minutes <= 60:
+            return int(round(minutes))
+        if minutes <= 300:
+            return int(round(minutes / 5.0)) * 5
+        return int(round(minutes / 15.0)) * 15
 
-    def _edit_presets(self):
-        # 用简易 osascript 对话依次询问过于繁琐; 这里用一个多行输入弹窗。
-        from AppKit import NSAlert, NSTextView, NSScrollView, NSMakeRect as _R
-        lines = "\n".join(f"{p['name']}={p['seconds'] // 60}" for p in self.presets)
-        alert = NSAlert.alloc().init()
-        alert.setMessageText_(self.tr("edit_presets"))
-        alert.setInformativeText_(self.tr("preset_help"))
-        alert.addButtonWithTitle_(self.tr("save"))
-        alert.addButtonWithTitle_(self.tr("cancel"))
-        tv = NSTextView.alloc().initWithFrame_(_R(0, 0, 240, 120))
-        tv.setString_(lines)
-        scroll = NSScrollView.alloc().initWithFrame_(_R(0, 0, 240, 120))
-        scroll.setDocumentView_(tv)
-        scroll.setHasVerticalScroller_(True)
-        alert.setAccessoryView_(scroll)
-        if alert.runModal() != 1000:  # 非"保存"
+    def _set_pending_seconds(self, seconds, source=None):
+        self._pending_seconds = max(0, min(MAX_DURATION_SECONDS, int(round(seconds))))
+        if source != "slider":
+            self.duration_slider.setDoubleValue_(self._pending_seconds / 60.0)
+        if source != "duration":
+            self.duration_field.setStringValue_(fmt_remaining(self._pending_seconds))
+        if source != "target":
+            self.target_field.setStringValue_(fmt_clock_time(time.time() + self._pending_seconds))
+
+    def _slider_changed(self, sender):
+        self._set_pending_seconds(self._snap_minutes(sender.doubleValue()) * 60, source="slider")
+
+    def _duration_field_changed(self, sender):
+        try:
+            seconds = parse_duration_text(sender.stringValue())
+        except ValueError:
+            self._set_pending_seconds(self._pending_seconds)
             return
-        new = []
-        for raw in tv.string().splitlines():
-            raw = raw.strip()
-            if not raw or "=" not in raw:
-                continue
-            name, _, mins = raw.partition("=")
-            name = name.strip()
-            try:
-                seconds = int(round(float(mins.strip()) * 60))
-            except ValueError:
-                continue
-            if name and seconds > 0:
-                new.append({"name": name, "seconds": seconds})
-        if new:
-            self.presets = new
-            self._rebuild_presets()
-            self._persist()
-            self._update_size()
+        self._set_pending_seconds(seconds, source="duration")
+        sender.setStringValue_(fmt_remaining(self._pending_seconds))
+
+    def _target_field_changed(self, sender):
+        now = time.time()
+        try:
+            target = parse_clock_text(sender.stringValue(), now)
+        except ValueError:
+            self._set_pending_seconds(self._pending_seconds)
+            return
+        self._set_pending_seconds(target - now, source="target")
+        sender.setStringValue_(fmt_clock_time(now + self._pending_seconds))
 
     # -- 启动倒计时 --------------------------------------------------------
-    def _start_custom(self):
-        try:
-            minutes = float(self.custom_field.stringValue().strip())
-        except ValueError:
-            return
-        if minutes > 0:
-            self._start_timer(int(round(minutes * 60)))
+    def _start_pending(self):
+        if self._pending_seconds > 0:
+            self._start_timer(self._pending_seconds)
 
     def _start_timer(self, seconds, label=None):
         label = (label if label is not None else self.input_field.stringValue()).strip()
@@ -1896,12 +2157,12 @@ class MultiTimerApp(NSObject):
             "id": uuid.uuid4().hex,
             "label": label,
             "kind": "countdown",
-            "duration": int(seconds),
-            "end_ts": now + seconds,
-            "created_ts": now,
+            "start_ts": now,
+            "end_ts": now + int(seconds),
+            "paused_at": 0.0,
             "pinned": False,
-            "paused": False,
             "finished": False,
+            "laps": [],
         }
         self._add_timer_row(timer)
         self.input_field.setStringValue_("")
@@ -1917,9 +2178,8 @@ class MultiTimerApp(NSObject):
         now = time.time()
         timer = {
             "id": uuid.uuid4().hex, "label": label, "kind": "stopwatch",
-            "duration": 0, "start_ts": now, "elapsed_before": 0.0,
-            "created_ts": now, "pinned": False, "paused": False,
-            "finished": False, "laps": [],
+            "start_ts": now, "end_ts": 0.0, "paused_at": 0.0,
+            "pinned": False, "finished": False, "laps": [],
         }
         self._add_timer_row(timer)
         self.input_field.setStringValue_("")
@@ -1939,15 +2199,13 @@ class MultiTimerApp(NSObject):
     def _add_timer_row(self, timer):
         now = time.time()
         timer.setdefault("kind", "countdown")
-        timer.setdefault("duration", 0)
-        timer.setdefault("created_ts", now)
+        timer.setdefault("start_ts", now)
+        timer.setdefault("end_ts", 0.0)
+        timer.setdefault("paused_at", 0.0)
         timer.setdefault("pinned", False)
-        timer.setdefault("paused", False)
         timer.setdefault("finished", False)
         timer.setdefault("laps", [])
-        if timer["kind"] == "stopwatch":
-            timer.setdefault("start_ts", now)
-            timer.setdefault("elapsed_before", 0.0)
+        countdown = timer["kind"] == "countdown"
         actions = []
         card = _CardView.alloc().init()
         rowv = _vstack(4)
@@ -1977,35 +2235,69 @@ class MultiTimerApp(NSObject):
         top.addArrangedSubview_(title_spacer)
         title_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
 
-        pin = _button("★" if timer.get("pinned") else "☆", lambda s: self._toggle_pin(timer), actions, small=True, quiet=True)
+        pin = _button(
+            "★" if timer.get("pinned") else "☆",
+            lambda s: self._toggle_pin(timer),
+            actions,
+            small=True,
+            quiet=True,
+        )
         pin.setToolTip_(self.tr("unpin") if timer.get("pinned") else self.tr("pin"))
         pin.heightAnchor().constraintEqualToConstant_(20).setActive_(True)
         top.addArrangedSubview_(pin)
-
-        remaining = NSTextField.labelWithString_("--:--")
-        remaining.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(13, NSFontWeightSemibold))
-        remaining.setTextColor_(NSColor.controlAccentColor())
-        remaining.setContentHuggingPriority_forOrientation_(750, NSLayoutConstraintOrientationHorizontal)
-        top.addArrangedSubview_(remaining)
         rowv.addArrangedSubview_(top)
 
-        progress = _ProgressView.alloc().init()
-        progress.heightAnchor().constraintEqualToConstant_(3).setActive_(True)
-        progress.setHidden_(timer["kind"] == "stopwatch")
-        rowv.addArrangedSubview_(progress)
+        times = _hstack(5)
+        remaining = self._make_time_label("--:--", 13, NSFontWeightSemibold)
+        remaining.setTextColor_(NSColor.controlAccentColor())
+        remaining_editor = None
+        if countdown:
+            remaining_editor = _TimeEditController.alloc().initWithField_commit_(
+                remaining, self._make_remaining_commit(timer)
+            )
+            remaining.setTimeController_(remaining_editor)
+            remaining.setDelegate_(remaining_editor)
+            remaining.setToolTip_(self.tr("edit_remaining_tip"))
+            actions.append(remaining_editor)
+        times.addArrangedSubview_(remaining)
+        times_spacer = NSView.alloc().init()
+        times.addArrangedSubview_(times_spacer)
+        times_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
+
+        ends_label = _section_label(self.tr("ends_at"))
+        target = self._make_time_label("--:--", 11.5, NSFontWeightMedium)
+        target.setTextColor_(NSColor.secondaryLabelColor())
+        target_editor = None
+        if countdown:
+            target_editor = _TimeEditController.alloc().initWithField_commit_(
+                target, self._make_target_commit(timer)
+            )
+            target.setTimeController_(target_editor)
+            target.setDelegate_(target_editor)
+            target.setToolTip_(self.tr("edit_target_tip"))
+            actions.append(target_editor)
+        ends_label.setHidden_(not countdown)
+        target.setHidden_(not countdown)
+        times.addArrangedSubview_(ends_label)
+        times.addArrangedSubview_(target)
+        rowv.addArrangedSubview_(times)
 
         lap_label = _section_label("")
         lap_label.setHidden_(True)
         rowv.addArrangedSubview_(lap_label)
 
         bottom = _hstack(4)
-        decrease = _button("−", lambda s: self._choose_decrease(timer), actions, small=True, quiet=True)
-        plus1 = _button("＋1m", self._make_extend_cb(timer, 60), actions, small=True, quiet=True)
-        plus10 = _button("＋10m", self._make_extend_cb(timer, 600), actions, small=True, quiet=True)
-        plus60 = _button("＋1h", self._make_extend_cb(timer, 3600), actions, small=True, quiet=True)
-        pause = _button("▶" if timer.get("paused") else "Ⅱ", lambda s: self._toggle_pause(timer), actions, small=True, quiet=True)
-        pause.setToolTip_(self.tr("resume") if timer.get("paused") else self.tr("pause"))
-        duplicate = _button("⧉", lambda s: self._duplicate_timer(timer), actions, small=True, quiet=True)
+        pause = _button(
+            "▶" if timer_is_paused(timer) else "Ⅱ",
+            lambda s: self._toggle_pause(timer),
+            actions,
+            small=True,
+            quiet=True,
+        )
+        pause.setToolTip_(self.tr("resume") if timer_is_paused(timer) else self.tr("pause"))
+        duplicate = _button(
+            "⧉", lambda s: self._duplicate_timer(timer), actions, small=True, quiet=True
+        )
         duplicate.setToolTip_(self.tr("duplicate"))
         lap = _button(self.tr("lap"), lambda s: self._record_lap(timer), actions, small=True, quiet=True)
         cancel = _button("×", self._make_cancel_cb(timer), actions, small=True, quiet=True)
@@ -2013,21 +2305,12 @@ class MultiTimerApp(NSObject):
         done = _button(self.tr("checked"), self._make_cancel_cb(timer), actions, small=True, accent=True)
         restart.setHidden_(True)
         done.setHidden_(True)
-        countdown = timer["kind"] == "countdown"
-        decrease.setHidden_(not countdown)
-        plus1.setHidden_(not countdown)
-        plus10.setHidden_(not countdown)
-        plus60.setHidden_(not countdown)
         lap.setHidden_(countdown)
-        for button in (decrease, plus1, plus10, plus60, pause, duplicate, lap, cancel, restart, done):
+        for button in (pause, duplicate, lap, cancel, restart, done):
             button.heightAnchor().constraintEqualToConstant_(22).setActive_(True)
         for button in (pause, duplicate, cancel):
             button.widthAnchor().constraintEqualToConstant_(30).setActive_(True)
 
-        bottom.addArrangedSubview_(decrease)
-        bottom.addArrangedSubview_(plus1)
-        bottom.addArrangedSubview_(plus10)
-        bottom.addArrangedSubview_(plus60)
         bottom.addArrangedSubview_(lap)
         bottom.addArrangedSubview_(pause)
         bottom.addArrangedSubview_(duplicate)
@@ -2042,25 +2325,21 @@ class MultiTimerApp(NSObject):
         _embed_with_insets(card, rowv, top=6, right=8, bottom=6, left=8)
         self.timers_stack.addArrangedSubview_(card)
         self._fill_width(card)
-        top.leadingAnchor().constraintEqualToAnchor_(rowv.leadingAnchor()).setActive_(True)
-        top.trailingAnchor().constraintEqualToAnchor_(rowv.trailingAnchor()).setActive_(True)
-        progress.leadingAnchor().constraintEqualToAnchor_(rowv.leadingAnchor()).setActive_(True)
-        progress.trailingAnchor().constraintEqualToAnchor_(rowv.trailingAnchor()).setActive_(True)
-        bottom.leadingAnchor().constraintEqualToAnchor_(rowv.leadingAnchor()).setActive_(True)
-        bottom.trailingAnchor().constraintEqualToAnchor_(rowv.trailingAnchor()).setActive_(True)
+        for row in (top, times, bottom):
+            row.leadingAnchor().constraintEqualToAnchor_(rowv.leadingAnchor()).setActive_(True)
+            row.trailingAnchor().constraintEqualToAnchor_(rowv.trailingAnchor()).setActive_(True)
 
         timer["view"] = card
         timer["card"] = card
-        timer["progress"] = progress
         timer["remaining"] = remaining
+        timer["remaining_editor"] = remaining_editor
+        timer["target"] = target
+        timer["target_editor"] = target_editor
+        timer["ends_label"] = ends_label
         timer["name"] = name
         timer["rename"] = rename
         timer["pin"] = pin
         timer["lap_label"] = lap_label
-        timer["decrease"] = decrease
-        timer["plus1"] = plus1
-        timer["plus10"] = plus10
-        timer["plus60"] = plus60
         timer["pause"] = pause
         timer["duplicate"] = duplicate
         timer["lap"] = lap
@@ -2074,12 +2353,70 @@ class MultiTimerApp(NSObject):
             self._apply_finished_style(timer)
         else:
             self._apply_running_style(timer)
-            self._update_row(timer)
+        self._update_row(timer)
         self._sort_timer_views()
         self._update_section()
 
-    def _make_extend_cb(self, timer, seconds):
-        return lambda s: self._extend_timer(timer, seconds)
+    def _make_time_label(self, text, size, weight):
+        field = _TimeField.alloc().initWithFrame_(NSMakeRect(0, 0, 60, 20))
+        field.setStringValue_(text)
+        field.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(size, weight))
+        field.setEditable_(False)
+        field.setSelectable_(False)
+        field.setBezeled_(False)
+        field.setBordered_(False)
+        field.setDrawsBackground_(False)
+        field.setAlignment_(1)
+        field.setFocusRingType_(NSFocusRingTypeNone)
+        field.setContentHuggingPriority_forOrientation_(750, NSLayoutConstraintOrientationHorizontal)
+        return field
+
+    def _make_remaining_commit(self, timer):
+        def commit(text):
+            try:
+                seconds = parse_duration_text(text)
+            except ValueError:
+                return False
+            base = timer_reference_time(timer)
+            timer["end_ts"] = base + seconds
+            timer["start_ts"] = min(float(timer["start_ts"]), timer["end_ts"])
+            self._apply_timer_change(timer)
+            return True
+        return commit
+
+    def _make_target_commit(self, timer):
+        def commit(text):
+            try:
+                target = parse_clock_text(text, timer_reference_time(timer))
+            except ValueError:
+                return False
+            timer["end_ts"] = target
+            timer["start_ts"] = min(float(timer["start_ts"]), timer["end_ts"])
+            self._apply_timer_change(timer)
+            return True
+        return commit
+
+    def _apply_timer_change(self, timer):
+        """Re-evaluate a countdown after its start or end time changed."""
+        if timer_remaining(timer) <= 0:
+            if not timer.get("finished"):
+                self._finish_timer(timer)
+        else:
+            if timer.get("finished"):
+                timer["finished"] = False
+                self._clear_delivered_notification(timer.get("id"))
+                self._apply_running_style(timer)
+            self._update_row(timer)
+        self._persist()
+        self._sort_timer_views()
+        self._update_size()
+        self._refresh_status_item()
+
+    def _finish_timer(self, timer):
+        timer["finished"] = True
+        timer["paused_at"] = 0.0
+        self._send_finish_notification(timer)
+        self._apply_finished_style(timer)
 
     def _make_cancel_cb(self, timer):
         return lambda s: self._cancel_timer(timer)
@@ -2087,56 +2424,10 @@ class MultiTimerApp(NSObject):
     def _make_restart_cb(self, timer):
         return lambda s: self._restart_timer(timer)
 
-    def _extend_timer(self, timer, seconds):
-        if timer.get("kind") != "countdown":
-            return
-        if timer.get("paused"):
-            timer["paused_remaining"] = max(0, timer.get("paused_remaining", 0)) + seconds
-        else:
-            timer["end_ts"] += seconds
-        timer["duration"] += seconds
-        self._update_row(timer)
-        self._persist()
-        self._sort_timer_views()
-
-    def _choose_decrease(self, timer):
-        response = self._show_alert(
-            self.tr("decrease"), timer["label"],
-            ("−1 min", "−5 min", "−10 min", self.tr("cancel")),
-        )
-        if response not in (1000, 1001, 1002):
-            return
-        self._decrease_timer(timer, (60, 300, 600)[response - 1000])
-
-    def _decrease_timer(self, timer, seconds):
-        remaining = self._timer_remaining(timer)
-        if seconds >= remaining:
-            response = self._show_alert(
-                self.tr("confirm_finish"), self.tr("confirm_finish_detail", name=timer["label"]),
-                (self.tr("finish_now"), self.tr("cancel")),
-            )
-            if response != 1000:
-                return
-            if timer.get("paused"):
-                timer["paused_remaining"] = 0
-            else:
-                timer["end_ts"] = time.time()
-            timer["finished"] = True
-            self._send_finish_notification(timer)
-            self._apply_finished_style(timer)
-        elif timer.get("paused"):
-            timer["paused_remaining"] = remaining - seconds
-        else:
-            timer["end_ts"] -= seconds
-        if not timer.get("finished"):
-            self._update_row(timer)
-        self._persist()
-        self._sort_timer_views()
-
     def _duplicate_timer(self, timer):
         if timer.get("kind") == "stopwatch":
             return self._start_stopwatch(timer["label"])
-        return self._start_timer(timer["duration"], timer["label"])
+        return self._start_timer(timer_duration(timer), timer["label"])
 
     def _toggle_pin(self, timer):
         timer["pinned"] = not timer.get("pinned", False)
@@ -2145,51 +2436,31 @@ class MultiTimerApp(NSObject):
         self._sort_timer_views()
         self._persist()
 
-    def _timer_remaining(self, timer):
-        if timer.get("kind", "countdown") != "countdown":
-            return 0.0
-        if timer.get("paused"):
-            return max(0.0, float(timer.get("paused_remaining", 0)))
-        return max(0.0, float(timer.get("end_ts", 0)) - time.time())
-
-    def _timer_elapsed(self, timer):
-        elapsed = float(timer.get("elapsed_before", 0))
-        if not timer.get("paused"):
-            elapsed += max(0.0, time.time() - float(timer.get("start_ts", time.time())))
-        return elapsed
-
-    def _timer_display_seconds(self, timer):
-        return self._timer_elapsed(timer) if timer.get("kind") == "stopwatch" else self._timer_remaining(timer)
-
     def _toggle_pause(self, timer):
         if timer.get("finished"):
             return
         now = time.time()
-        if timer.get("paused"):
-            timer["paused"] = False
-            if timer.get("kind") == "stopwatch":
-                timer["start_ts"] = now
-            else:
-                timer["end_ts"] = now + float(timer.get("paused_remaining", 0))
+        if timer_is_paused(timer):
+            shift = now - float(timer["paused_at"])
+            timer["start_ts"] = float(timer["start_ts"]) + shift
+            if timer.get("end_ts"):
+                timer["end_ts"] = float(timer["end_ts"]) + shift
+            timer["paused_at"] = 0.0
             timer["pause"].setTitle_("Ⅱ")
             timer["pause"].setToolTip_(self.tr("pause"))
         else:
-            if timer.get("kind") == "stopwatch":
-                timer["elapsed_before"] = self._timer_elapsed(timer)
-            else:
-                timer["paused_remaining"] = self._timer_remaining(timer)
-            timer["paused"] = True
+            timer["paused_at"] = now
             timer["pause"].setTitle_("▶")
             timer["pause"].setToolTip_(self.tr("resume"))
         self._update_row(timer)
         self._persist()
+        self._sort_timer_views()
         self._refresh_status_item()
 
     def _record_lap(self, timer):
         if timer.get("kind") != "stopwatch" or timer.get("finished"):
             return
-        elapsed = self._timer_elapsed(timer)
-        timer.setdefault("laps", []).append(elapsed)
+        timer.setdefault("laps", []).append(timer_elapsed(timer))
         self._update_row(timer)
         self._persist()
 
@@ -2200,9 +2471,9 @@ class MultiTimerApp(NSObject):
             pinned = 0 if timer.get("pinned") else 1
             finished = 1 if timer.get("finished") else 0
             if self.settings.get("sort_by_expiry") and timer.get("kind") == "countdown":
-                order = self._timer_remaining(timer)
+                order = timer_remaining(timer)
             else:
-                order = float(timer.get("created_ts", 0))
+                order = float(timer.get("start_ts", 0))
             return pinned, finished, order
         self.timers.sort(key=key)
         for timer in self.timers:
@@ -2233,9 +2504,10 @@ class MultiTimerApp(NSObject):
         self._refresh_status_item()
 
     def _update_row(self, timer):
+        remaining_editor = timer.get("remaining_editor")
+        target_editor = timer.get("target_editor")
         if timer.get("kind") == "stopwatch":
-            elapsed = self._timer_elapsed(timer)
-            timer["remaining"].setStringValue_(fmt_remaining(elapsed))
+            timer["remaining"].setStringValue_(fmt_remaining(timer_elapsed(timer)))
             timer["remaining"].setTextColor_(NSColor.controlAccentColor())
             laps = timer.get("laps", [])
             if laps:
@@ -2245,11 +2517,18 @@ class MultiTimerApp(NSObject):
             else:
                 timer["lap_label"].setHidden_(True)
             return
-        remaining = self._timer_remaining(timer)
-        timer["remaining"].setStringValue_(fmt_remaining(remaining))
-        frac = max(0.0, min(1.0, remaining / max(1, timer["duration"])))
-        timer["progress"].setDoubleValue_(frac * 1000.0)
-        color = NSColor.systemRedColor() if remaining <= 10 and not timer.get("paused") else NSColor.controlAccentColor()
+        remaining = timer_remaining(timer)
+        if remaining_editor is None or not remaining_editor.editing():
+            timer["remaining"].setStringValue_(
+                self.tr("finished") if timer.get("finished") else fmt_remaining(remaining)
+            )
+        if target_editor is None or not target_editor.editing():
+            timer["target"].setStringValue_(fmt_clock_time(timer.get("end_ts") or time.time()))
+        if timer.get("finished"):
+            timer["remaining"].setTextColor_(NSColor.systemRedColor())
+            return
+        nearly_finished = remaining <= 10 and not timer_is_paused(timer)
+        color = NSColor.systemRedColor() if nearly_finished else NSColor.controlAccentColor()
         timer["remaining"].setTextColor_(color)
 
     def _update_section(self):
@@ -2261,9 +2540,7 @@ class MultiTimerApp(NSObject):
     def systemColorsDidChange_(self, _notification):
         """Refresh custom accent-colored elements after System Settings changes."""
         for timer in self.timers:
-            timer["progress"].refreshAccent()
-            if not timer.get("finished"):
-                self._update_row(timer)
+            self._update_row(timer)
 
     # -- 计时循环 ----------------------------------------------------------
     def _start_ticker(self):
@@ -2279,12 +2556,10 @@ class MultiTimerApp(NSObject):
                 continue
             if panel_visible:
                 self._update_row(timer)
-            if timer.get("kind") == "countdown" and not timer.get("paused") and self._timer_remaining(timer) <= 0:
+            if timer.get("kind") == "countdown" and not timer_is_paused(timer) and timer_remaining(timer) <= 0:
                 newly_finished.append(timer)
         for timer in newly_finished:
-            self._send_finish_notification(timer)
-            timer["finished"] = True
-            self._apply_finished_style(timer)
+            self._finish_timer(timer)
         if newly_finished:
             self._persist()
             self._sort_timer_views()
@@ -2294,13 +2569,12 @@ class MultiTimerApp(NSObject):
     def _apply_finished_style(self, timer):
         timer["remaining"].setStringValue_(self.tr("finished"))
         timer["remaining"].setTextColor_(NSColor.systemRedColor())
-        timer["progress"].setDoubleValue_(0.0)
         timer["card"].layer().setBorderWidth_(1.0)
         timer["card"].layer().setBorderColor_(
             NSColor.systemRedColor().colorWithAlphaComponent_(0.45).CGColor()
         )
-        for key in ("decrease", "plus1", "plus10", "plus60", "pause", "lap"):
-            timer[key].setHidden_(True)
+        timer["pause"].setHidden_(True)
+        timer["lap"].setHidden_(True)
         timer["duplicate"].setHidden_(False)
         timer["cancel"].setHidden_(True)
         timer["restart"].setHidden_(False)
@@ -2309,32 +2583,31 @@ class MultiTimerApp(NSObject):
     def _apply_running_style(self, timer):
         timer["card"].layer().setBorderWidth_(0.0)
         countdown = timer.get("kind") == "countdown"
-        timer["decrease"].setHidden_(not countdown)
-        timer["plus1"].setHidden_(not countdown)
-        timer["plus10"].setHidden_(not countdown)
-        timer["plus60"].setHidden_(not countdown)
         timer["lap"].setHidden_(countdown)
         timer["pause"].setHidden_(False)
-        timer["pause"].setTitle_("▶" if timer.get("paused") else "Ⅱ")
-        timer["pause"].setToolTip_(self.tr("resume") if timer.get("paused") else self.tr("pause"))
+        timer["pause"].setTitle_("▶" if timer_is_paused(timer) else "Ⅱ")
+        timer["pause"].setToolTip_(self.tr("resume") if timer_is_paused(timer) else self.tr("pause"))
         timer["duplicate"].setHidden_(False)
         timer["cancel"].setHidden_(False)
         timer["restart"].setHidden_(True)
         timer["done"].setHidden_(True)
 
     def _restart_timer(self, timer):
+        now = time.time()
+        duration = timer_duration(timer)
         timer["finished"] = False
-        timer["paused"] = False
+        timer["paused_at"] = 0.0
+        timer["start_ts"] = now
         if timer.get("kind") == "stopwatch":
-            timer["start_ts"] = time.time()
-            timer["elapsed_before"] = 0.0
+            timer["end_ts"] = 0.0
             timer["laps"] = []
         else:
-            timer["end_ts"] = time.time() + timer["duration"]
+            timer["end_ts"] = now + duration
         self._clear_delivered_notification(timer.get("id"))
         self._apply_running_style(timer)
         self._update_row(timer)
         self._persist()
+        self._sort_timer_views()
         self._update_size()
 
     # -- 通知 (UNUserNotificationCenter, 从 MultiTimer.app 发出) --------------
@@ -2457,6 +2730,7 @@ class MultiTimerApp(NSObject):
 
     def _show_preview_window(self):
         """Show the production content in a normal window for visual QA only."""
+        self.target_field.setStringValue_("15:30")
         preview_view = self.content_view
         if os.environ.get("MULTITIMER_PREVIEW_VIEW") == "settings":
             if not getattr(self, "_settings_vc", None):
@@ -2507,7 +2781,7 @@ class MultiTimerApp(NSObject):
         self.popover.setContentSize_(view.fittingSize())
 
     def _persist(self):
-        save_state(self.presets, self.timers, self._skipped_update, self.settings)
+        save_state(self.timers, self._skipped_update, self.settings)
 
     def _quit(self):
         self._persist()
@@ -2524,9 +2798,15 @@ class MultiTimerApp(NSObject):
             self._control_server.shutdown()
             self._control_server.server_close()
         try:
-            CONTROL_SOCKET_PATH.unlink(missing_ok=True)
+            socket_stat = CONTROL_SOCKET_PATH.stat()
+            identity = (socket_stat.st_dev, socket_stat.st_ino)
+            if identity == self._control_socket_identity:
+                CONTROL_SOCKET_PATH.unlink()
         except OSError:
             pass
+        if self._control_lock is not None:
+            self._control_lock.close()
+            self._control_lock = None
 
 
 def main():

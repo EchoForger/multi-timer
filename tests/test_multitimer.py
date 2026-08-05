@@ -90,48 +90,164 @@ class MultiTimerLogicTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 multitimer._parse_multitimer_url(url)
 
-    def test_state_round_trip_preserves_new_timer_fields(self):
+    def test_duration_text_treats_a_bare_number_as_minutes(self):
+        self.assertEqual(multitimer.parse_duration_text("16"), 960)
+        self.assertEqual(multitimer.parse_duration_text("16:30"), 990)
+        self.assertEqual(multitimer.parse_duration_text("1:16:30"), 4590)
+        self.assertEqual(multitimer.parse_duration_text(" 5 "), 300)
+        self.assertEqual(multitimer.parse_duration_text("2000"), multitimer.MAX_DURATION_SECONDS)
+
+    def test_duration_text_rejects_unusable_input(self):
+        for text in ("", "abc", "1:2:3:4", "-5", "1::2", "nan", "inf", "-inf"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                multitimer.parse_duration_text(text)
+
+    def test_url_and_cli_reject_non_finite_durations(self):
+        for url in (
+            "multitimer://start?minutes=nan",
+            "multitimer://start?minutes=inf",
+        ):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                multitimer._parse_multitimer_url(url)
+        for value in ("nan", "inf", "-inf", "0"):
+            with self.subTest(value=value):
+                self.assertEqual(multitimer._run_cli(["start", "Tea", value]), 2)
+
+    def test_clock_text_resolves_the_next_matching_time(self):
+        now = time.mktime(time.struct_time((2026, 8, 4, 20, 0, 0, 1, 216, -1)))
+        for text in ("21:30", "2130", "21：30"):
+            with self.subTest(text=text):
+                target = multitimer.parse_clock_text(text, now)
+                self.assertEqual(multitimer.fmt_clock_time(target), "21:30")
+                self.assertEqual(target - now, 90 * 60)
+        tomorrow = multitimer.parse_clock_text("19:00", now)
+        self.assertEqual(multitimer.fmt_clock_time(tomorrow), "19:00")
+        self.assertEqual(tomorrow - now, 23 * 3600)
+
+    def test_clock_text_rejects_impossible_times(self):
+        now = time.time()
+        for text in ("", "25:00", "12:75", "abc", "123456"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                multitimer.parse_clock_text(text, now)
+
+    def test_paused_timer_keeps_its_remaining_time_and_duration(self):
+        now = time.time()
+        timer = {
+            "kind": "countdown", "start_ts": now - 100, "end_ts": now + 200,
+            "paused_at": now,
+        }
+        self.assertTrue(multitimer.timer_is_paused(timer))
+        self.assertAlmostEqual(multitimer.timer_remaining(timer), 200, places=3)
+        self.assertAlmostEqual(multitimer.timer_duration(timer), 300, places=3)
+        self.assertAlmostEqual(multitimer.timer_elapsed(timer), 100, places=3)
+
+    def test_state_round_trip_keeps_only_start_and_end_times(self):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"
             now = time.time()
             timers = [
                 {
-                    "id": "tea", "label": "Tea", "kind": "countdown", "duration": 300,
-                    "end_ts": now + 120, "created_ts": now, "pinned": True,
-                    "paused": True, "paused_remaining": 120, "finished": False,
+                    "id": "tea", "label": "Tea", "kind": "countdown",
+                    "start_ts": now - 180, "end_ts": now + 120, "paused_at": now,
+                    "pinned": True, "finished": False, "laps": [],
                 },
                 {
-                    "id": "focus", "label": "Focus", "kind": "stopwatch", "duration": 0,
-                    "start_ts": now, "elapsed_before": 42, "created_ts": now,
-                    "pinned": False, "paused": True, "finished": False, "laps": [20, 42],
+                    "id": "focus", "label": "Focus", "kind": "stopwatch",
+                    "start_ts": now - 42, "end_ts": 0.0, "paused_at": 0.0,
+                    "pinned": False, "finished": False, "laps": [20, 42],
                 },
             ]
             settings = dict(multitimer.DEFAULT_SETTINGS)
             settings.update({"show_remaining": True, "show_count": True, "language": "en"})
             with mock.patch.object(multitimer, "STATE_PATH", state_path):
-                multitimer.save_state([], timers, "0.5.0", settings)
+                multitimer.save_state(timers, "0.6.0", settings)
                 restored = multitimer.load_state()
-            self.assertEqual(restored["skipped_update"], "0.5.0")
+            payload = json.loads(state_path.read_text())
+            self.assertEqual(payload["schema_version"], 3)
+            self.assertNotIn("presets", payload)
+            self.assertEqual(
+                set(payload["timers"][0]),
+                {"id", "label", "kind", "start_ts", "end_ts", "paused_at", "pinned", "finished", "laps"},
+            )
+            self.assertEqual(restored["skipped_update"], "0.6.0")
             self.assertTrue(restored["settings"]["show_count"])
             self.assertNotIn("language", restored["settings"])
             self.assertTrue(restored["timers"][0]["pinned"])
+            self.assertAlmostEqual(multitimer.timer_remaining(restored["timers"][0]), 120, places=3)
             self.assertEqual(restored["timers"][1]["laps"], [20, 42])
-            self.assertEqual(json.loads(state_path.read_text())["schema_version"], 2)
 
-    def test_old_state_is_migrated(self):
+    def test_state_loader_skips_damaged_records(self):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"
+            now = time.time()
             state_path.write_text(json.dumps({
-                "presets": [{"name": "5min", "seconds": 300}],
-                "timers": [{
-                    "id": "old", "label": "Old", "duration": 300,
-                    "end_ts": time.time() + 300,
-                }],
+                "timers": [
+                    None,
+                    "invalid",
+                    {"id": "broken", "start_ts": "bad", "end_ts": now + 60},
+                    {"id": "tea", "label": "Tea", "start_ts": now, "end_ts": now + 60},
+                ],
+                "settings": [],
             }))
             with mock.patch.object(multitimer, "STATE_PATH", state_path):
                 restored = multitimer.load_state()
-            self.assertEqual(restored["timers"][0]["kind"], "countdown")
-            self.assertFalse(restored["timers"][0]["pinned"])
+            self.assertEqual([timer["id"] for timer in restored["timers"]], ["tea"])
+            self.assertEqual(restored["settings"], multitimer.DEFAULT_SETTINGS)
+
+    def test_state_loader_accepts_null_or_non_list_timers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            with mock.patch.object(multitimer, "STATE_PATH", state_path):
+                for timers in (None, {}, "invalid"):
+                    with self.subTest(timers=timers):
+                        state_path.write_text(json.dumps({"timers": timers}))
+                        self.assertEqual(multitimer.load_state()["timers"], [])
+
+    def test_atomic_save_preserves_existing_state_when_replace_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            state_path.write_text('{"original": true}')
+            with (
+                mock.patch.object(multitimer, "STATE_PATH", state_path),
+                mock.patch.object(multitimer.os, "replace", side_effect=OSError("disk error")),
+                self.assertRaises(OSError),
+            ):
+                multitimer.save_state([])
+            self.assertEqual(state_path.read_text(), '{"original": true}')
+            self.assertEqual(list(state_path.parent.glob(".state.json.*.tmp")), [])
+
+    def test_old_state_is_migrated_to_start_and_end_times(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            now = time.time()
+            state_path.write_text(json.dumps({
+                "presets": [{"name": "5min", "seconds": 300}],
+                "timers": [
+                    {
+                        "id": "old", "label": "Old", "duration": 300,
+                        "created_ts": now - 60, "end_ts": now + 240,
+                    },
+                    {
+                        "id": "held", "label": "Held", "duration": 600, "paused": True,
+                        "paused_remaining": 300, "created_ts": now - 900, "end_ts": now - 300,
+                    },
+                    {
+                        "id": "watch", "label": "Watch", "kind": "stopwatch",
+                        "start_ts": now - 30, "elapsed_before": 12, "paused": True,
+                    },
+                ],
+            }))
+            with mock.patch.object(multitimer, "STATE_PATH", state_path):
+                restored = multitimer.load_state()
+            countdown, held, watch = restored["timers"]
+            self.assertEqual(countdown["kind"], "countdown")
+            self.assertFalse(countdown["pinned"])
+            self.assertNotIn("duration", countdown)
+            self.assertAlmostEqual(multitimer.timer_duration(countdown), 300, places=0)
+            self.assertTrue(multitimer.timer_is_paused(held))
+            self.assertAlmostEqual(multitimer.timer_remaining(held), 300, places=0)
+            self.assertAlmostEqual(multitimer.timer_duration(held), 600, places=0)
+            self.assertAlmostEqual(multitimer.timer_elapsed(watch), 12, places=0)
             self.assertEqual(restored["settings"], multitimer.DEFAULT_SETTINGS)
 
     def test_setting_switch_persists_immediately(self):
@@ -142,6 +258,13 @@ class MultiTimerLogicTests(unittest.TestCase):
                 app._boolean_setting_changed("show_count", _Switch(1))
                 restored = multitimer.load_state()
             self.assertTrue(restored["settings"]["show_count"])
+
+    def test_slider_snapping_keeps_short_timers_precise(self):
+        snap = multitimer.MultiTimerApp._snap_minutes
+        self.assertEqual(snap(0.4), 0)
+        self.assertEqual(snap(17.2), 17)
+        self.assertEqual(snap(133.0), 135)
+        self.assertEqual(snap(1000.0), 1005)
 
 
 if __name__ == "__main__":

@@ -90,6 +90,15 @@ class MultiTimerLogicTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 multitimer._parse_multitimer_url(url)
 
+    def test_duration_display_uses_fixed_hour_minute_second_fields(self):
+        self.assertEqual(multitimer.fmt_remaining(0), "00:00:00")
+        self.assertEqual(multitimer.fmt_remaining(65), "00:01:05")
+        self.assertEqual(multitimer.fmt_remaining(40_320), "11:12:00")
+        self.assertEqual(multitimer.split_time(40_320), (11, 12, 0))
+        self.assertEqual(multitimer.join_time(11, 12, 0), 40_320)
+        with self.assertRaises(ValueError):
+            multitimer.join_time(1, 60, 0)
+
     def test_duration_text_treats_a_bare_number_as_minutes(self):
         self.assertEqual(multitimer.parse_duration_text("16"), 960)
         self.assertEqual(multitimer.parse_duration_text("16:30"), 990)
@@ -115,18 +124,21 @@ class MultiTimerLogicTests(unittest.TestCase):
 
     def test_clock_text_resolves_the_next_matching_time(self):
         now = time.mktime(time.struct_time((2026, 8, 4, 20, 0, 0, 1, 216, -1)))
-        for text in ("21:30", "2130", "21：30"):
+        for text in ("21:30", "2130", "21：30：00", "213000"):
             with self.subTest(text=text):
                 target = multitimer.parse_clock_text(text, now)
-                self.assertEqual(multitimer.fmt_clock_time(target), "21:30")
+                self.assertEqual(multitimer.fmt_clock_time(target), "21:30:00")
                 self.assertEqual(target - now, 90 * 60)
+        with_seconds = multitimer.parse_clock_text("21:30:45", now)
+        self.assertEqual(multitimer.fmt_clock_time(with_seconds), "21:30:45")
+        self.assertEqual(with_seconds - now, 90 * 60 + 45)
         tomorrow = multitimer.parse_clock_text("19:00", now)
-        self.assertEqual(multitimer.fmt_clock_time(tomorrow), "19:00")
+        self.assertEqual(multitimer.fmt_clock_time(tomorrow), "19:00:00")
         self.assertEqual(tomorrow - now, 23 * 3600)
 
     def test_clock_text_rejects_impossible_times(self):
         now = time.time()
-        for text in ("", "25:00", "12:75", "abc", "123456"):
+        for text in ("", "25:00", "12:75", "12:30:75", "abc", "1234567"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 multitimer.parse_clock_text(text, now)
 
@@ -258,6 +270,29 @@ class MultiTimerLogicTests(unittest.TestCase):
                 app._boolean_setting_changed("show_count", _Switch(1))
                 restored = multitimer.load_state()
             self.assertTrue(restored["settings"]["show_count"])
+
+    def test_slider_uses_slow_then_fast_exponential_curve(self):
+        seconds = multitimer.seconds_for_slider_position
+        self.assertEqual(seconds(0), 0)
+        self.assertEqual(seconds(1), multitimer.MAX_DURATION_SECONDS)
+        self.assertEqual(seconds(0.5), 3 * 3600)
+        self.assertLess(seconds(0.25) - seconds(0), seconds(1) - seconds(0.75))
+        for duration in (0, 300, 3600, 3 * 3600, 12 * 3600, 24 * 3600):
+            with self.subTest(duration=duration):
+                position = multitimer.slider_position_for_seconds(duration)
+                self.assertAlmostEqual(seconds(position), duration, delta=1)
+
+    def test_time_segment_hit_testing_selects_each_pair(self):
+        segment = multitimer.time_segment_for_position
+        self.assertEqual(segment(0, 90), 0)
+        self.assertEqual(segment(29, 90), 0)
+        self.assertEqual(segment(30, 90), 1)
+        self.assertEqual(segment(59, 90), 1)
+        self.assertEqual(segment(60, 90), 2)
+        self.assertEqual(segment(100, 90), 2)
+        self.assertEqual(multitimer.time_segment_range(0), (0, 2))
+        self.assertEqual(multitimer.time_segment_range(1), (3, 2))
+        self.assertEqual(multitimer.time_segment_range(2), (6, 2))
 
     def test_slider_snapping_keeps_short_timers_precise(self):
         snap = multitimer.MultiTimerApp._snap_minutes

@@ -39,6 +39,7 @@ from Foundation import (
     NSObject,
     NSTimer,
     NSMakeRect,
+    NSMakeRange,
     NSNotificationCenter,
     NSAppleEventManager,
     NSBundle,
@@ -126,7 +127,7 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 # macOS 26 can retain a broken Control Center visibility record for a status
 # item even after the app is reinstalled.  Use a fresh, status-bar-specific
 # identity for the production app so upgrades are not tied to that stale entry.
@@ -684,13 +685,97 @@ def _install_dmg_update(release: dict, destination=None):
 # ---------------------------------------------------------------------------
 # 纯逻辑: 格式化 / 通知 / 持久化
 # ---------------------------------------------------------------------------
+def split_time(seconds: float) -> tuple:
+    """Split a duration into displayable fields.
+
+    Args:
+        seconds: Duration in seconds.
+
+    Returns:
+        A tuple containing hours, minutes, and seconds.
+    """
+    total = max(0, min(MAX_DURATION_SECONDS, int(round(seconds))))
+    hours, remainder = divmod(total, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return hours, minutes, seconds
+
+
+def join_time(hours: int, minutes: int, seconds: int) -> int:
+    """Combine time fields into seconds.
+
+    Args:
+        hours: Non-negative hour field.
+        minutes: Minute field from zero through 59.
+        seconds: Second field from zero through 59.
+
+    Returns:
+        The combined duration, capped at 24 hours.
+
+    Raises:
+        ValueError: If any field is outside its valid range.
+    """
+    values = (int(hours), int(minutes), int(seconds))
+    if values[0] < 0 or not 0 <= values[1] <= 59 or not 0 <= values[2] <= 59:
+        raise ValueError("Time fields are outside their valid ranges")
+    return min(MAX_DURATION_SECONDS, values[0] * 3600 + values[1] * 60 + values[2])
+
+
+def slider_position_for_seconds(seconds: float) -> float:
+    """Map a duration to an exponential slider position.
+
+    Args:
+        seconds: Duration in seconds.
+
+    Returns:
+        A normalised slider position from zero through one.
+    """
+    ratio = max(0.0, min(1.0, float(seconds) / MAX_DURATION_SECONDS))
+    return ratio ** (1.0 / 3.0)
+
+
+def seconds_for_slider_position(position: float) -> int:
+    """Map a slider position to a slow-then-fast duration curve.
+
+    Args:
+        position: Normalised slider position from zero through one.
+
+    Returns:
+        The corresponding duration in seconds.
+    """
+    normalised = max(0.0, min(1.0, float(position)))
+    return int(round(MAX_DURATION_SECONDS * normalised ** 3))
+
+
+def time_segment_for_position(position: float, width: float) -> int:
+    """Find a time segment at a horizontal position.
+
+    Args:
+        position: Horizontal position inside the field.
+        width: Total field width.
+
+    Returns:
+        Zero for hours, one for minutes, or two for seconds.
+    """
+    segment_width = max(1.0, float(width)) / 3.0
+    return min(2, max(0, int(float(position) / segment_width)))
+
+
+def time_segment_range(segment: int) -> tuple:
+    """Return the two-character selection range for a time segment.
+
+    Args:
+        segment: Hour, minute, or second segment index.
+
+    Returns:
+        The text selection location and length.
+    """
+    bounded = min(2, max(0, int(segment)))
+    return bounded * 3, 2
+
+
 def fmt_remaining(seconds: float) -> str:
-    seconds = max(0, int(round(seconds)))
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    if h:
-        return f"{h:d}:{m:02d}:{s:02d}"
-    return f"{m:02d}:{s:02d}"
+    hours, minutes, seconds = split_time(seconds)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def fmt_status_remaining(seconds: float) -> str:
@@ -708,8 +793,8 @@ def fmt_duration(seconds: float) -> str:
 
 
 def fmt_clock_time(timestamp: float) -> str:
-    """Format an absolute timestamp as a local 24-hour HH:MM label."""
-    return time.strftime("%H:%M", time.localtime(float(timestamp)))
+    """Format an absolute timestamp as a local 24-hour HH:MM:SS label."""
+    return time.strftime("%H:%M:%S", time.localtime(float(timestamp)))
 
 
 def parse_duration_text(text: str) -> int:
@@ -750,21 +835,26 @@ def parse_clock_text(text: str, now: float) -> float:
     if len(parts) == 1:
         digits = parts[0]
         if not digits.isdigit():
-            raise ValueError("Target time must look like 21:30")
+            raise ValueError("Target time must look like 21:30:00")
         if len(digits) <= 2:
-            hour, minute = int(digits), 0
+            hour, minute, second = int(digits), 0, 0
         elif len(digits) <= 4:
-            hour, minute = int(digits[:-2]), int(digits[-2:])
+            hour, minute, second = int(digits[:-2]), int(digits[-2:]), 0
+        elif len(digits) <= 6:
+            hour = int(digits[:-4])
+            minute = int(digits[-4:-2])
+            second = int(digits[-2:])
         else:
-            raise ValueError("Target time must look like 21:30")
-    elif len(parts) == 2 and all(part.isdigit() for part in parts):
+            raise ValueError("Target time must look like 21:30:00")
+    elif len(parts) in {2, 3} and all(part.isdigit() for part in parts):
         hour, minute = int(parts[0]), int(parts[1])
+        second = int(parts[2]) if len(parts) == 3 else 0
     else:
-        raise ValueError("Target time must look like 21:30")
-    if hour > 23 or minute > 59:
-        raise ValueError("Target time is outside 00:00-23:59")
+        raise ValueError("Target time must look like 21:30:00")
+    if hour > 23 or minute > 59 or second > 59:
+        raise ValueError("Target time is outside 00:00:00-23:59:59")
     base = datetime.datetime.fromtimestamp(now)
-    target = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    target = base.replace(hour=hour, minute=minute, second=second, microsecond=0)
     if target.timestamp() <= now:
         target += datetime.timedelta(days=1)
     return target.timestamp()
@@ -1165,6 +1255,15 @@ class _RenameController(NSObject):
         self._original = timer["label"]
         return self
 
+    def cancel(self):
+        """Cancel active renaming before its timer view is removed."""
+        if not self._editing:
+            return
+        self._cancel_requested = True
+        window = self._field.window()
+        if window is not None:
+            window.makeFirstResponder_(None)
+
     def begin(self):
         if self._editing:
             return
@@ -1195,7 +1294,7 @@ class _RenameController(NSObject):
 
 
 class _TimeField(_EditableTextField):
-    """Time label that turns into a native editor on a single click."""
+    """Time label with independently selectable hour, minute, and second fields."""
 
     def initWithFrame_(self, frame):
         self = objc.super(_TimeField, self).initWithFrame_(frame)
@@ -1209,7 +1308,11 @@ class _TimeField(_EditableTextField):
 
     def mouseDown_(self, event):
         if self._time_controller is not None and not self.isEditable():
-            self._time_controller.begin()
+            point = self.convertPoint_fromView_(event.locationInWindow(), None)
+            segment = time_segment_for_position(
+                point.x, self.bounds().size.width
+            )
+            self._time_controller.beginWithSegment_(segment)
             return
         objc.super(_TimeField, self).mouseDown_(event)
 
@@ -1231,13 +1334,29 @@ class _TimeEditController(NSObject):
     def editing(self):
         return self._editing
 
+    def cancel(self):
+        """Cancel active editing and release the shared AppKit field editor."""
+        if not self._editing:
+            return
+        self._cancel_requested = True
+        window = self._field.window()
+        if window is not None:
+            window.makeFirstResponder_(None)
+
     def begin(self):
+        self.beginWithSegment_(0)
+
+    def beginWithSegment_(self, segment):
         if self._editing:
             return
         self._editing = True
         self._cancel_requested = False
         self._original = self._field.stringValue()
         _set_inline_editing(self._field, True)
+        editor = self._field.currentEditor()
+        if editor is not None:
+            location, length = time_segment_range(segment)
+            editor.setSelectedRange_(NSMakeRange(location, length))
 
     def _finish(self):
         if not self._editing:
@@ -2006,8 +2125,10 @@ class MultiTimerApp(NSObject):
         duration_row.addArrangedSubview_(duration_label)
         self.duration_slider = NSSlider.alloc().init()
         self.duration_slider.setMinValue_(0.0)
-        self.duration_slider.setMaxValue_(float(MAX_DURATION_SECONDS // 60))
-        self.duration_slider.setDoubleValue_(self._pending_seconds / 60.0)
+        self.duration_slider.setMaxValue_(1.0)
+        self.duration_slider.setDoubleValue_(
+            slider_position_for_seconds(self._pending_seconds)
+        )
         self.duration_slider.setControlSize_(NSControlSizeSmall)
         slider_action = _Action.alloc().initWithCallback_(lambda sender: self._slider_changed(sender))
         self._retain.append(slider_action)
@@ -2015,9 +2136,12 @@ class MultiTimerApp(NSObject):
         self.duration_slider.setAction_("invoke:")
         self.duration_slider.setContinuous_(True)
         duration_row.addArrangedSubview_(self.duration_slider)
-        self.duration_field = self._make_value_field(
-            fmt_remaining(self._pending_seconds), 62, lambda sender: self._duration_field_changed(sender)
+        self.duration_field, duration_editor = self._make_segmented_time_field(
+            fmt_remaining(self._pending_seconds),
+            72,
+            lambda text: self._duration_text_changed(text),
         )
+        self._retain.append(duration_editor)
         duration_row.addArrangedSubview_(self.duration_field)
         composer.addArrangedSubview_(duration_row)
 
@@ -2025,10 +2149,12 @@ class MultiTimerApp(NSObject):
         target_label = NSTextField.labelWithString_(self.tr("target_time"))
         target_label.setFont_(NSFont.systemFontOfSize_weight_(11.5, NSFontWeightMedium))
         target_row.addArrangedSubview_(target_label)
-        self.target_field = self._make_value_field(
-            fmt_clock_time(time.time() + self._pending_seconds), 58,
-            lambda sender: self._target_field_changed(sender),
+        self.target_field, target_editor = self._make_segmented_time_field(
+            fmt_clock_time(time.time() + self._pending_seconds),
+            72,
+            lambda text: self._target_text_changed(text),
         )
+        self._retain.append(target_editor)
         target_row.addArrangedSubview_(self.target_field)
         target_spacer = NSView.alloc().init()
         target_row.addArrangedSubview_(target_spacer)
@@ -2090,18 +2216,12 @@ class MultiTimerApp(NSObject):
         view.trailingAnchor().constraintEqualToAnchor_(self.root_stack.trailingAnchor()).setActive_(True)
 
     # -- 时长拉杆与目标时间 -------------------------------------------------
-    def _make_value_field(self, text, width, callback):
-        field = _EditableTextField.alloc().initWithFrame_(NSMakeRect(0, 0, width, 22))
-        field.setStringValue_(text)
-        field.setAlignment_(1)
-        field.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(11.5, NSFontWeightMedium))
-        field.widthAnchor().constraintEqualToConstant_(width).setActive_(True)
-        field.heightAnchor().constraintEqualToConstant_(22).setActive_(True)
-        action = _Action.alloc().initWithCallback_(callback)
-        self._retain.append(action)
-        field.setTarget_(action)
-        field.setAction_("invoke:")
-        return field
+    def _make_segmented_time_field(self, text, width, commit):
+        field = self._make_time_label(text, 11.5, NSFontWeightMedium, width)
+        editor = _TimeEditController.alloc().initWithField_commit_(field, commit)
+        field.setTimeController_(editor)
+        field.setDelegate_(editor)
+        return field, editor
 
     @staticmethod
     def _snap_minutes(minutes):
@@ -2115,33 +2235,39 @@ class MultiTimerApp(NSObject):
     def _set_pending_seconds(self, seconds, source=None):
         self._pending_seconds = max(0, min(MAX_DURATION_SECONDS, int(round(seconds))))
         if source != "slider":
-            self.duration_slider.setDoubleValue_(self._pending_seconds / 60.0)
+            self.duration_slider.setDoubleValue_(
+                slider_position_for_seconds(self._pending_seconds)
+            )
         if source != "duration":
             self.duration_field.setStringValue_(fmt_remaining(self._pending_seconds))
         if source != "target":
-            self.target_field.setStringValue_(fmt_clock_time(time.time() + self._pending_seconds))
+            self.target_field.setStringValue_(
+                fmt_clock_time(time.time() + self._pending_seconds)
+            )
 
     def _slider_changed(self, sender):
-        self._set_pending_seconds(self._snap_minutes(sender.doubleValue()) * 60, source="slider")
+        seconds = seconds_for_slider_position(sender.doubleValue())
+        minutes = self._snap_minutes(seconds / 60.0)
+        self._set_pending_seconds(minutes * 60, source="slider")
 
-    def _duration_field_changed(self, sender):
+    def _duration_text_changed(self, text):
         try:
-            seconds = parse_duration_text(sender.stringValue())
+            seconds = parse_duration_text(text)
         except ValueError:
-            self._set_pending_seconds(self._pending_seconds)
-            return
+            return False
         self._set_pending_seconds(seconds, source="duration")
-        sender.setStringValue_(fmt_remaining(self._pending_seconds))
+        self.duration_field.setStringValue_(fmt_remaining(self._pending_seconds))
+        return True
 
-    def _target_field_changed(self, sender):
+    def _target_text_changed(self, text):
         now = time.time()
         try:
-            target = parse_clock_text(sender.stringValue(), now)
+            target = parse_clock_text(text, now)
         except ValueError:
-            self._set_pending_seconds(self._pending_seconds)
-            return
+            return False
         self._set_pending_seconds(target - now, source="target")
-        sender.setStringValue_(fmt_clock_time(now + self._pending_seconds))
+        self.target_field.setStringValue_(fmt_clock_time(now + self._pending_seconds))
+        return True
 
     # -- 启动倒计时 --------------------------------------------------------
     def _start_pending(self):
@@ -2248,7 +2374,7 @@ class MultiTimerApp(NSObject):
         rowv.addArrangedSubview_(top)
 
         times = _hstack(5)
-        remaining = self._make_time_label("--:--", 13, NSFontWeightSemibold)
+        remaining = self._make_time_label("00:00:00", 13, NSFontWeightSemibold, 76)
         remaining.setTextColor_(NSColor.controlAccentColor())
         remaining_editor = None
         if countdown:
@@ -2265,7 +2391,7 @@ class MultiTimerApp(NSObject):
         times_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
 
         ends_label = _section_label(self.tr("ends_at"))
-        target = self._make_time_label("--:--", 11.5, NSFontWeightMedium)
+        target = self._make_time_label("00:00:00", 11.5, NSFontWeightMedium, 68)
         target.setTextColor_(NSColor.secondaryLabelColor())
         target_editor = None
         if countdown:
@@ -2357,8 +2483,8 @@ class MultiTimerApp(NSObject):
         self._sort_timer_views()
         self._update_section()
 
-    def _make_time_label(self, text, size, weight):
-        field = _TimeField.alloc().initWithFrame_(NSMakeRect(0, 0, 60, 20))
+    def _make_time_label(self, text, size, weight, width=76):
+        field = _TimeField.alloc().initWithFrame_(NSMakeRect(0, 0, width, 20))
         field.setStringValue_(text)
         field.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(size, weight))
         field.setEditable_(False)
@@ -2368,6 +2494,7 @@ class MultiTimerApp(NSObject):
         field.setDrawsBackground_(False)
         field.setAlignment_(1)
         field.setFocusRingType_(NSFocusRingTypeNone)
+        field.widthAnchor().constraintEqualToConstant_(width).setActive_(True)
         field.setContentHuggingPriority_forOrientation_(750, NSLayoutConstraintOrientationHorizontal)
         return field
 
@@ -2490,6 +2617,10 @@ class MultiTimerApp(NSObject):
         self._update_size()
 
     def _remove_timer(self, timer):
+        for key in ("rename", "remaining_editor", "target_editor"):
+            editor = timer.get(key)
+            if editor is not None:
+                editor.cancel()
         view = timer.get("view")
         if view is not None:
             self.timers_stack.removeArrangedSubview_(view)
@@ -2567,7 +2698,9 @@ class MultiTimerApp(NSObject):
         self._refresh_status_item()
 
     def _apply_finished_style(self, timer):
-        timer["remaining"].setStringValue_(self.tr("finished"))
+        editor = timer.get("remaining_editor")
+        if editor is None or not editor.editing():
+            timer["remaining"].setStringValue_(self.tr("finished"))
         timer["remaining"].setTextColor_(NSColor.systemRedColor())
         timer["card"].layer().setBorderWidth_(1.0)
         timer["card"].layer().setBorderColor_(
@@ -2730,7 +2863,7 @@ class MultiTimerApp(NSObject):
 
     def _show_preview_window(self):
         """Show the production content in a normal window for visual QA only."""
-        self.target_field.setStringValue_("15:30")
+        self.target_field.setStringValue_("15:30:00")
         preview_view = self.content_view
         if os.environ.get("MULTITIMER_PREVIEW_VIEW") == "settings":
             if not getattr(self, "_settings_vc", None):

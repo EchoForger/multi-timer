@@ -12,8 +12,10 @@
   (点击 "已检查" 按钮 => 直接从列表中移除对应倒计时)
 """
 
+import csv
 import datetime
 import fcntl
+import io
 import json
 import hashlib
 import math
@@ -29,7 +31,10 @@ import threading
 import time
 import urllib.request
 import uuid
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import xml.etree.ElementTree as ET
+from html import escape as html_escape
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -40,6 +45,7 @@ from Foundation import (
     NSTimer,
     NSMakeRect,
     NSMakeRange,
+    NSMakeSize,
     NSNotificationCenter,
     NSAppleEventManager,
     NSBundle,
@@ -76,6 +82,7 @@ from AppKit import (
     NSMenu,
     NSMenuItem,
     NSImage,
+    NSBezierPath,
     NSPopover,
     NSPopoverBehaviorTransient,
     NSPopoverBehaviorApplicationDefined,
@@ -91,6 +98,9 @@ from AppKit import (
     NSBox,
     NSBoxSeparator,
     NSColor,
+    NSSound,
+    NSEvent,
+    NSEventMaskKeyDown,
     NSEventModifierFlagCommand,
     NSEventModifierFlagShift,
     NSFont,
@@ -127,15 +137,10 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.5.1"
-# macOS 26 can retain a broken Control Center visibility record for a status
-# item even after the app is reinstalled.  Use a fresh, status-bar-specific
-# identity for the production app so upgrades are not tied to that stale entry.
-APP_BUNDLE_ID = "io.github.echoforger.multitimer.menuapp2"
-# A stable, explicit identity lets Control Center restore the status item
-# instead of treating every launch as a new ephemeral host. This new app
-# identity is intentionally different from legacy records that macOS may have
-# remembered as hidden. Keep this value stable across future releases.
+APP_VERSION = "0.6.0"
+# Keep one stable identity across installs, login items, notifications,
+# URL handling, and Control Center status-item restoration.
+APP_BUNDLE_ID = "io.github.echoforger.multitimer"
 STATUS_ITEM_AUTOSAVE_NAME = f"{APP_BUNDLE_ID}.primary"
 APP_COPYRIGHT = "© 2026 EchoForger"
 APP_HOMEPAGE = "https://echoforger.github.io/multi-timer/"
@@ -151,13 +156,20 @@ STATE_PATH = Path(
 PANEL_WIDTH = 296
 CONTROL_SOCKET_PATH = STATE_PATH.parent / "control.sock"
 CONTROL_LOCK_PATH = STATE_PATH.parent / "control.lock"
+POMODORO_STATS_PATH = STATE_PATH.parent / "pomodoro-stats.json"
 MAX_DURATION_SECONDS = 24 * 3600
+POMODORO_MAX_SECONDS = 59 * 60 + 59
 DEFAULT_DURATION_SECONDS = 300
 
 DEFAULT_SETTINGS = {
     "show_remaining": False,
     "show_count": False,
     "sort_by_expiry": True,
+    "pomodoro_work_seconds": 25 * 60,
+    "pomodoro_break_seconds": 5 * 60,
+    "pomodoro_auto_cycle": False,
+    "show_pomodoro": True,
+    "sync_revision": 0.0,
 }
 
 STRINGS = {
@@ -168,6 +180,19 @@ STRINGS = {
         "task": "任务 {number}", "rename_tip": "双击或用力按压以重命名",
         "edit_remaining_tip": "点击编辑剩余时间，例如 16 表示 16 分钟",
         "edit_target_tip": "点击编辑目标时间，例如 21:30",
+        "pomodoro": "番茄钟", "pomodoro_ready": "准备开始专注",
+        "pomodoro_work": "专注中", "pomodoro_break": "休息中",
+        "pomodoro_next": "休息完成", "pomodoro_start": "开始工作",
+        "pomodoro_pause": "暂停", "pomodoro_resume": "继续",
+        "pomodoro_skip": "立即休息", "pomodoro_stop": "停止",
+        "pomodoro_work_duration": "工作时长", "pomodoro_break_duration": "休息时长",
+        "pomodoro_auto_cycle": "休息后自动开始下一轮工作",
+        "pomodoro_work_done": "工作结束", "pomodoro_break_started": "开始休息 {minutes} 分钟",
+        "pomodoro_break_done": "休息结束", "pomodoro_work_started": "开始下一轮工作",
+        "pomodoro_waiting": "准备好后开始下一轮工作",
+        "pomodoro_today": "今日完成 {count} 个", "pomodoro_skip_break": "跳过休息",
+        "show_pomodoro": "显示番茄钟模块", "pomodoro_stats": "查看专注统计",
+        "pomodoro_extend": "延长 5 分钟",
         "restart": "重新计时", "checked": "✓ 已检查", "finished": "已结束",
         "pause": "暂停", "resume": "继续", "lap": "计圈", "laps": "{count} 圈 · 最近 {latest}",
         "duplicate": "复制", "pin": "置顶", "unpin": "取消置顶",
@@ -184,7 +209,7 @@ STRINGS = {
         "retry": "重新创建图标", "later": "稍后", "notification_request": "允许通知",
         "source": "安装来源：{source}", "version": "版本 {version}", "development": "开发模式", "unknown": "未知",
         "tagline": "多个倒计时，一个节奏。\n原生 macOS 菜单栏多任务倒计时器。",
-        "privacy": "MIT License · 无账户 · 无遥测 · 数据仅在本机",
+        "privacy": "MIT License · 无账户 · 无遥测 · 默认本地，可选 iCloud KVS 同步设置与聚合统计",
         "check_updates": "检查更新", "homepage": "项目主页", "close": "关闭",
         "update_busy": "更新正在进行", "update_busy_detail": "请稍候，MultiTimer 会在完成后通知你。",
         "checking": "正在检查 MultiTimer 更新…", "check_failed": "检查更新失败",
@@ -202,6 +227,19 @@ STRINGS = {
         "task": "Timer {number}", "rename_tip": "Double-click or Force Click to rename",
         "edit_remaining_tip": "Click to edit the remaining time, e.g. 16 means 16 minutes",
         "edit_target_tip": "Click to edit the target time, e.g. 21:30",
+        "pomodoro": "Pomodoro", "pomodoro_ready": "Ready to focus",
+        "pomodoro_work": "Focusing", "pomodoro_break": "On a break",
+        "pomodoro_next": "Break complete", "pomodoro_start": "Start Work",
+        "pomodoro_pause": "Pause", "pomodoro_resume": "Resume",
+        "pomodoro_skip": "Start Break", "pomodoro_stop": "Stop",
+        "pomodoro_work_duration": "Work duration", "pomodoro_break_duration": "Break duration",
+        "pomodoro_auto_cycle": "Automatically start work after each break",
+        "pomodoro_work_done": "Work complete", "pomodoro_break_started": "Starting a {minutes}-minute break",
+        "pomodoro_break_done": "Break complete", "pomodoro_work_started": "Starting the next work session",
+        "pomodoro_waiting": "Start the next work session when ready",
+        "pomodoro_today": "{count} completed today", "pomodoro_skip_break": "Skip Break",
+        "show_pomodoro": "Show Pomodoro module", "pomodoro_stats": "View Focus Statistics",
+        "pomodoro_extend": "Extend 5 Minutes",
         "restart": "Restart", "checked": "✓ Done", "finished": "Finished",
         "pause": "Pause", "resume": "Resume", "lap": "Lap", "laps": "{count} laps · latest {latest}",
         "duplicate": "Duplicate", "pin": "Pin", "unpin": "Unpin",
@@ -218,7 +256,7 @@ STRINGS = {
         "retry": "Recreate Icon", "later": "Later", "notification_request": "Allow Notifications",
         "source": "Install source: {source}", "version": "Version {version}", "development": "Development", "unknown": "Unknown",
         "tagline": "Multiple timers, one rhythm.\nA native macOS menu bar timer.",
-        "privacy": "MIT License · No account · No telemetry · Local data only",
+        "privacy": "MIT License · No account · No telemetry · Local by default; optional iCloud KVS sync",
         "check_updates": "Check for Updates", "homepage": "Project Home", "close": "Close",
         "update_busy": "Update in Progress", "update_busy_detail": "MultiTimer will notify you when it finishes.",
         "checking": "Checking for MultiTimer updates…", "check_failed": "Update Check Failed",
@@ -260,7 +298,13 @@ def _parse_multitimer_url(value: str) -> dict:
     if parsed.scheme.lower() != "multitimer":
         raise ValueError("URL scheme must be multitimer")
     command = (parsed.netloc or parsed.path.lstrip("/")).lower()
+    path = parsed.path.strip("/").lower()
     query = parse_qs(parsed.query)
+    if command == "pomodoro":
+        action = path or str(query.get("action", ["start"])[0]).lower()
+        if action not in {"start", "pause", "skip", "stop", "status"}:
+            raise ValueError("Unsupported Pomodoro URL action")
+        return {"command": "pomodoro", "action": action}
     if command != "start":
         raise ValueError("Unsupported MultiTimer URL command")
     name = str(query.get("name", [""])[0]).strip()
@@ -419,6 +463,14 @@ def _current_app_bundle_path():
         if path.suffix.lower() == ".app" and (path / "Contents" / "MacOS").is_dir():
             return path
     return None
+
+
+def _can_use_user_notifications() -> bool:
+    """Return whether this process has a valid application bundle identity."""
+    return (
+        os.environ.get("MULTITIMER_DISABLE_NOTIFICATIONS") != "1"
+        and _current_app_bundle_path() is not None
+    )
 
 
 def _has_launchservices_identity() -> bool:
@@ -773,6 +825,19 @@ def time_segment_range(segment: int) -> tuple:
     return bounded * 3, 2
 
 
+def replace_time_segment_digit(text: str, segment: int, digit: str, index: int) -> str:
+    """Replace one digit in a fixed HH:MM:SS time string."""
+    location, _length = time_segment_range(segment)
+    values = list(str(text).zfill(8)[-8:])
+    if index == 0:
+        values[location] = "0"
+        values[location + 1] = digit
+    else:
+        values[location] = values[location + 1]
+        values[location + 1] = digit
+    return "".join(values)
+
+
 def fmt_remaining(seconds: float) -> str:
     hours, minutes, seconds = split_time(seconds)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
@@ -783,6 +848,13 @@ def fmt_status_remaining(seconds: float) -> str:
     total_minutes = max(0, int(math.ceil(max(0.0, float(seconds)) / 60.0)))
     hours, minutes = divmod(total_minutes, 60)
     return f"{hours:02d}:{minutes:02d}"
+
+
+def fmt_pomodoro_remaining(seconds: float) -> str:
+    """Format a Pomodoro countdown as fixed-width MM:SS."""
+    total = max(0, min(POMODORO_MAX_SECONDS, int(math.ceil(float(seconds)))))
+    minutes, remaining_seconds = divmod(total, 60)
+    return f"{minutes:02d}:{remaining_seconds:02d}"
 
 
 def fmt_duration(seconds: float) -> str:
@@ -892,8 +964,27 @@ def timer_display_seconds(timer: dict) -> float:
     return timer_elapsed(timer) if timer.get("kind") == "stopwatch" else timer_remaining(timer)
 
 
+def pomodoro_remaining(pomodoro: dict, now=None) -> float:
+    """Return the remaining seconds for an active Pomodoro stage."""
+    if pomodoro.get("phase") not in {"work", "break"}:
+        return 0.0
+    reference = float(pomodoro.get("paused_at") or 0) or float(now or time.time())
+    return max(0.0, float(pomodoro.get("end_ts") or 0) - reference)
+
+
+def next_pomodoro_phase(phase: str, auto_cycle: bool) -> str:
+    """Return the phase entered after the current stage completes."""
+    if phase == "work":
+        return "break"
+    if phase == "break":
+        return "work" if auto_cycle else "ready"
+    return "idle"
+
+
 _NOTIF_CATEGORY = "TIMER_DONE"
 _NOTIF_ACTION_CHECK = "MARK_CHECKED"
+_POMODORO_NOTIF_CATEGORY = "POMODORO_DONE"
+_POMODORO_ACTION_EXTEND = "POMODORO_EXTEND_5"
 
 
 def _normalise_timer(raw: dict, now: float) -> dict:
@@ -987,23 +1078,17 @@ def _persistent_timer(timer: dict) -> dict:
     return {key: timer[key] for key in keys if key in timer}
 
 
-def save_state(timers: list, skipped_update="", settings=None) -> None:
-    """Atomically persist state without exposing a partial JSON document."""
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "schema_version": 3,
-        "timers": [_persistent_timer(timer) for timer in timers],
-        "skipped_update": skipped_update,
-        "settings": dict(settings or DEFAULT_SETTINGS),
-    }
+def _atomic_write_json(path: Path, payload: dict) -> None:
+    """Atomically write a JSON document to disk."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(payload, ensure_ascii=False, indent=2)
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
-            dir=STATE_PATH.parent,
-            prefix=f".{STATE_PATH.name}.",
+            dir=path.parent,
+            prefix=f".{path.name}.",
             suffix=".tmp",
             delete=False,
         ) as stream:
@@ -1011,11 +1096,72 @@ def save_state(timers: list, skipped_update="", settings=None) -> None:
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary_path, STATE_PATH)
+        os.replace(temporary_path, path)
         temporary_path = None
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def load_pomodoro_stats(path=None) -> dict:
+    """Load valid daily completed-Pomodoro counts."""
+    stats_path = Path(path or POMODORO_STATS_PATH)
+    try:
+        raw = json.loads(stats_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    stats = {}
+    for day, count in raw.items():
+        if not isinstance(day, str) or not isinstance(count, (int, float)):
+            continue
+        if isinstance(count, bool) or not math.isfinite(float(count)):
+            continue
+        try:
+            stats[day] = max(0, int(count))
+        except (OverflowError, ValueError):
+            continue
+    return stats
+
+
+def save_pomodoro_stats(stats: dict, path=None) -> None:
+    """Persist daily completed-Pomodoro counts atomically."""
+    stats_path = Path(path or POMODORO_STATS_PATH)
+    _atomic_write_json(stats_path, stats)
+
+
+def pomodoro_stats_last_days(stats: dict, days=30, today=None) -> list:
+    """Return a dense local-date series for the requested number of days."""
+    end = today or datetime.date.today()
+    return [
+        {
+            "date": (end - datetime.timedelta(days=offset)).isoformat(),
+            "count": int(stats.get((end - datetime.timedelta(days=offset)).isoformat(), 0)),
+        }
+        for offset in reversed(range(days))
+    ]
+
+
+def pomodoro_stats_csv(stats: dict, days=30, today=None) -> str:
+    """Return a CSV export of the dense statistics series."""
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    writer.writerow(("date", "completed_pomodoros"))
+    for item in pomodoro_stats_last_days(stats, days, today):
+        writer.writerow((item["date"], item["count"]))
+    return stream.getvalue()
+
+
+def save_state(timers: list, skipped_update="", settings=None) -> None:
+    """Atomically persist state without exposing a partial JSON document."""
+    payload = {
+        "schema_version": 3,
+        "timers": [_persistent_timer(timer) for timer in timers],
+        "skipped_update": skipped_update,
+        "settings": dict(settings or DEFAULT_SETTINGS),
+    }
+    _atomic_write_json(STATE_PATH, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -1046,6 +1192,69 @@ class _ControlHandler(socketserver.StreamRequestHandler):
 class _ControlServer(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
     allow_reuse_address = True
+
+    def get_request(self):
+        request, client_address = super().get_request()
+        request.settimeout(3)
+        return request, client_address
+
+
+def pomodoro_stats_html(series: list, token: str) -> str:
+    """Render the local-only Pomodoro statistics page."""
+    bars = "".join(
+        f'<div class="day"><div class="bar" style="height:{0 if item["count"] == 0 else max(3, item["count"] * 18)}px"></div>'
+        f'<span>{html_escape(item["date"][5:])}</span>'
+        f'<b>{html_escape(str(item["count"]))}</b></div>'
+        for item in series
+    )
+    total = sum(item["count"] for item in series)
+    return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>MultiTimer 专注统计</title><style>
+body{{font:15px -apple-system,BlinkMacSystemFont,sans-serif;margin:0;background:#f5f5f7;color:#1d1d1f}}
+main{{max-width:980px;margin:36px auto;padding:0 24px}}h1{{font-size:28px}}.summary{{font-size:44px;font-weight:700}}
+.chart{{display:flex;align-items:end;gap:6px;height:230px;padding:22px;background:white;border-radius:12px;overflow-x:auto}}
+.day{{min-width:22px;text-align:center;display:flex;flex-direction:column;justify-content:end;height:100%}}.bar{{background:#d9685d;border-radius:4px 4px 1px 1px}}
+.day span{{font-size:9px;color:#6e6e73;transform:rotate(-55deg);margin-top:16px}}.day b{{font-size:10px;margin-top:10px}}
+.actions{{margin-top:20px;display:flex;gap:12px}}a,button{{font:inherit;padding:9px 14px;border-radius:7px;border:0;background:#0071e3;color:white;text-decoration:none}}
+button{{background:#b42318;cursor:pointer}}</style></head><body><main><h1>最近 30 天专注统计</h1>
+<div class="summary">{total} 个番茄</div><p>每日完成趋势</p><div class="chart">{bars}</div>
+<div class="actions"><a href="/stats.csv">导出 CSV</a><button onclick="clearStats()">删除全部统计</button></div>
+<script>async function clearStats(){{if(!confirm('确定删除全部番茄统计？'))return;
+await fetch('/clear?token={token}',{{method:'POST'}});location.reload();}}</script></main></body></html>"""
+
+
+class _StatsHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/stats.csv":
+            payload = pomodoro_stats_csv(
+                self.server.app.pomodoro_stats_snapshot()
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", "attachment; filename=pomodoro-stats.csv")
+        else:
+            series = pomodoro_stats_last_days(
+                self.server.app.pomodoro_stats_snapshot()
+            )
+            payload = pomodoro_stats_html(series, self.server.token).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self):
+        if self.path != f"/clear?token={self.server.token}":
+            self.send_error(403)
+            return
+        if not self.server.app.clear_pomodoro_stats_from_server():
+            self.send_error(503)
+            return
+        self.send_response(204)
+        self.end_headers()
+
+    def log_message(self, _format, *_args):
+        return
 
 
 def _send_cli_request(request: dict, launch=True) -> dict:
@@ -1091,10 +1300,24 @@ def _send_cli_request(request: dict, launch=True) -> dict:
 def _run_cli(argv: list) -> int:
     command = argv[0] if argv else "help"
     if command in {"help", "--help", "-h"}:
-        print("Usage:\n  multitimer start [NAME] MINUTES\n  multitimer start --stopwatch [NAME]\n  multitimer list\n  multitimer pause ID_OR_NAME\n  multitimer cancel ID_OR_NAME")
+        print(
+            "Usage:\n"
+            "  multitimer start [NAME] MINUTES\n"
+            "  multitimer start --stopwatch [NAME]\n"
+            "  multitimer list\n"
+            "  multitimer pause ID_OR_NAME\n"
+            "  multitimer cancel ID_OR_NAME\n"
+            "  multitimer pomodoro start|pause|skip|stop|status"
+        )
         return 0
     request = {"command": command}
-    if command == "start":
+    if command == "pomodoro":
+        action = argv[1].lower() if len(argv) > 1 else "status"
+        if action not in {"start", "pause", "skip", "stop", "status"}:
+            print(f"Unknown pomodoro action: {action}", file=sys.stderr)
+            return 2
+        request["action"] = action
+    elif command == "start":
         args = argv[1:]
         if "--stopwatch" in args:
             args.remove("--stopwatch")
@@ -1132,7 +1355,9 @@ def _run_cli(argv: list) -> int:
     if not response.get("ok"):
         print(response.get("error", "Command failed"), file=sys.stderr)
         return 1
-    if command == "list":
+    if command == "pomodoro" and request.get("action") == "status":
+        print(response.get("status", "unknown"))
+    elif command == "list":
         rows = response.get("timers", [])
         if not rows:
             print("No active timers")
@@ -1221,9 +1446,6 @@ def _set_inline_editing(field, enabled):
     field.setDrawsBackground_(enabled)
     field.setFocusRingType_(NSFocusRingTypeDefault if enabled else NSFocusRingTypeNone)
     if enabled:
-        window = field.window()
-        if window is not None:
-            window.makeFirstResponder_(field)
         field.selectText_(None)
 
 
@@ -1307,14 +1529,16 @@ class _TimeField(_EditableTextField):
         self._time_controller = controller
 
     def mouseDown_(self, event):
-        if self._time_controller is not None and not self.isEditable():
-            point = self.convertPoint_fromView_(event.locationInWindow(), None)
-            segment = time_segment_for_position(
-                point.x, self.bounds().size.width
-            )
+        if self._time_controller is None:
+            objc.super(_TimeField, self).mouseDown_(event)
+            return
+        point = self.convertPoint_fromView_(event.locationInWindow(), None)
+        segment = time_segment_for_position(point.x, self.bounds().size.width)
+        if not self.isEditable():
             self._time_controller.beginWithSegment_(segment)
             return
         objc.super(_TimeField, self).mouseDown_(event)
+        self._time_controller.selectSegment_(segment)
 
 
 class _TimeEditController(NSObject):
@@ -1329,6 +1553,9 @@ class _TimeEditController(NSObject):
         self._editing = False
         self._cancel_requested = False
         self._original = field.stringValue()
+        self._segment = 0
+        self._digit_index = 0
+        self._event_owner = None
         return self
 
     def editing(self):
@@ -1348,21 +1575,50 @@ class _TimeEditController(NSObject):
 
     def beginWithSegment_(self, segment):
         if self._editing:
+            self.selectSegment_(segment)
             return
         self._editing = True
         self._cancel_requested = False
         self._original = self._field.stringValue()
+        if self._event_owner is not None:
+            self._event_owner._active_time_editor = self
         _set_inline_editing(self._field, True)
+        self.selectSegment_(segment)
+
+    def setEventOwner_(self, owner):
+        self._event_owner = owner
+
+    def selectSegment_(self, segment):
+        self._segment = min(2, max(0, int(segment)))
+        self._digit_index = 0
+        editor = self._field.currentEditor()
+        window = self._field.window()
+        if editor is not None and window is not None:
+            window.makeFirstResponder_(editor)
+            location, length = time_segment_range(self._segment)
+            editor.setSelectedRange_(NSMakeRange(location, length))
+
+    def insertDigit_(self, digit):
+        if not self._editing or digit not in "0123456789":
+            return False
+        value = replace_time_segment_digit(
+            self._field.stringValue(), self._segment, digit, self._digit_index
+        )
+        self._field.setStringValue_(value)
+        self._digit_index = (self._digit_index + 1) % 2
         editor = self._field.currentEditor()
         if editor is not None:
-            location, length = time_segment_range(segment)
+            location, length = time_segment_range(self._segment)
             editor.setSelectedRange_(NSMakeRange(location, length))
+        return True
 
     def _finish(self):
         if not self._editing:
             return
         text = self._field.stringValue()
         self._editing = False
+        if self._event_owner is not None and self._event_owner._active_time_editor is self:
+            self._event_owner._active_time_editor = None
         cancelled = self._cancel_requested
         self._cancel_requested = False
         _set_inline_editing(self._field, False)
@@ -1469,6 +1725,17 @@ class MultiTimerApp(NSObject):
         self.settings = state["settings"]
         self.language = _language_for_settings(self.settings)
         self.timers = []          # dict: id/label/start_ts/end_ts/view/name/remaining
+        self.pomodoro = {
+            "phase": "idle",
+            "end_ts": 0.0,
+            "paused_at": 0.0,
+            "session_id": "",
+        }
+        self.pomodoro_stats = load_pomodoro_stats()
+        self._stats_lock = threading.RLock()
+        self._stats_server = None
+        self._icloud_store = None
+        self._settings_revision = float(self.settings.get("sync_revision") or 0)
         self._retain = []         # 全局 target 保活
         self._closed_at = 0.0
         self._did_finish_launching = False
@@ -1477,6 +1744,10 @@ class MultiTimerApp(NSObject):
         self._control_lock = None
         self._control_socket_identity = None
         self._status_signature = None
+        self._status_images = {}
+        self._default_status_image = None
+        self._active_time_editor = None
+        self._key_monitor = None
         self._pending_seconds = DEFAULT_DURATION_SECONDS
         return self
 
@@ -1493,6 +1764,8 @@ class MultiTimerApp(NSObject):
         self._build_main_menu()
         self._build_status_item()
         self._build_popover()
+        self._install_time_key_monitor()
+        self._setup_icloud_sync()
         self._setup_notifications()
         self._setup_url_scheme()
         self._start_control_server()
@@ -1511,6 +1784,21 @@ class MultiTimerApp(NSObject):
             # The network work happens on a background thread. A startup check
             # stays quiet when there is no update or the network is unavailable.
             self._check_for_updates(automatic=True)
+
+    def _install_time_key_monitor(self):
+        def handle(event):
+            editor = self._active_time_editor
+            modifiers = event.modifierFlags()
+            if editor is None or modifiers & NSEventModifierFlagCommand:
+                return event
+            characters = str(event.charactersIgnoringModifiers() or "")
+            if len(characters) == 1 and editor.insertDigit_(characters):
+                return None
+            return event
+
+        self._key_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            NSEventMaskKeyDown, handle
+        )
 
     # -- 主菜单 (让 ⌘C/⌘V/⌘X/⌘A 能路由到输入框) -------------------------
     def _build_main_menu(self):
@@ -1555,6 +1843,7 @@ class MultiTimerApp(NSObject):
             img = NSImage.imageNamed_(NSImageNameStatusAvailable)
         if img is not None:
             img.setTemplate_(True)
+            self._default_status_image = img
             btn.setImage_(img)
             btn.setImagePosition_(NSImageOnly)
         else:
@@ -1567,10 +1856,60 @@ class MultiTimerApp(NSObject):
             self.status_item.setVisible_(True)
         self._refresh_status_item()
 
+    def _pomodoro_status_image(self, phase):
+        cached = self._status_images.get(phase)
+        if cached is not None:
+            return cached
+        color = (
+            NSColor.colorWithSRGBRed_green_blue_alpha_(0.85, 0.41, 0.36, 1.0)
+            if phase == "work"
+            else NSColor.colorWithSRGBRed_green_blue_alpha_(0.41, 0.66, 0.46, 1.0)
+        )
+        image = NSImage.alloc().initWithSize_(NSMakeSize(18, 18))
+        image.lockFocus()
+        color.setFill()
+        background = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            NSMakeRect(1, 2, 16, 14), 4, 4
+        )
+        background.fill()
+        symbol_color = NSColor.labelColor().colorWithAlphaComponent_(0.92)
+        symbol_color.setStroke()
+        ring = NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(5, 5, 8, 8))
+        ring.setLineWidth_(1.5)
+        ring.stroke()
+        hand = NSBezierPath.bezierPath()
+        hand.moveToPoint_((9, 9))
+        hand.lineToPoint_((9, 6.5))
+        hand.lineToPoint_((11, 9))
+        hand.setLineWidth_(1.25)
+        hand.stroke()
+        image.unlockFocus()
+        image.setTemplate_(False)
+        self._status_images[phase] = image
+        return image
+
+    def _restore_default_status_image(self):
+        button = self.status_item.button()
+        if self._default_status_image is not None and button.image() is not self._default_status_image:
+            button.setImage_(self._default_status_image)
+
     def _refresh_status_item(self):
         if not getattr(self, "status_item", None):
             return
         active = [t for t in self.timers if not t.get("finished")]
+        pomodoro_phase = self.pomodoro.get("phase")
+        if pomodoro_phase in {"work", "break"}:
+            title = fmt_pomodoro_remaining(pomodoro_remaining(self.pomodoro))
+            signature = (title, pomodoro_phase, bool(self.pomodoro.get("paused_at")))
+            if signature == self._status_signature:
+                return
+            button = self.status_item.button()
+            button.setTitle_(title)
+            button.setImage_(self._pomodoro_status_image(pomodoro_phase))
+            button.setImagePosition_(NSImageLeft)
+            self.status_item.setLength_(NSVariableStatusItemLength)
+            self._status_signature = signature
+            return
         parts = []
         if self.settings.get("show_remaining") and active:
             countdowns = [t for t in active if t.get("kind", "countdown") == "countdown"]
@@ -1580,9 +1919,10 @@ class MultiTimerApp(NSObject):
         if self.settings.get("show_count"):
             parts.append(str(len(active)))
         title = " · ".join(parts)
-        signature = (title, bool(title))
+        signature = (title, "default", bool(title))
         if signature == self._status_signature:
             return
+        self._restore_default_status_image()
         button = self.status_item.button()
         button.setTitle_(title)
         button.setImagePosition_(NSImageLeft if title else NSImageOnly)
@@ -1704,11 +2044,49 @@ class MultiTimerApp(NSObject):
             if request.get("kind") == "stopwatch":
                 timer = self._start_stopwatch(label)
             else:
-                seconds = int(request.get("seconds") or 0)
-                if seconds <= 0:
-                    raise ValueError("Duration must be positive")
+                try:
+                    seconds = int(request.get("seconds") or 0)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ValueError("Duration must be a positive finite number") from exc
+                if not 0 < seconds <= MAX_DURATION_SECONDS:
+                    raise ValueError("Duration must be between 1 second and 24 hours")
                 timer = self._start_timer(seconds, label)
             return {"ok": True, "message": f"Started {timer['label']}", "id": timer["id"]}
+        if command == "pomodoro":
+            action = str(request.get("action") or "status").lower()
+            phase = self.pomodoro.get("phase", "idle")
+            active = phase in {"work", "break"}
+            if action == "start":
+                if phase not in {"idle", "ready"}:
+                    raise ValueError("Pomodoro is already active")
+                self._start_pomodoro_work()
+            elif action == "pause":
+                if not active:
+                    raise ValueError("Pomodoro is not active")
+                self._toggle_pomodoro_pause()
+            elif action == "skip":
+                if not active:
+                    raise ValueError("Pomodoro is not active")
+                self._skip_pomodoro_phase()
+            elif action == "stop":
+                if not active:
+                    raise ValueError("Pomodoro is not active")
+                self._stop_pomodoro()
+            elif action != "status":
+                raise ValueError("Unsupported Pomodoro action")
+            phase = self.pomodoro.get("phase", "idle")
+            remaining = fmt_pomodoro_remaining(pomodoro_remaining(self.pomodoro))
+            paused = bool(self.pomodoro.get("paused_at"))
+            status = f"{phase} {'paused' if paused else remaining}"
+            return {
+                "ok": True,
+                "message": f"Pomodoro {action}: {status}",
+                "status": status,
+                "phase": phase,
+                "paused": paused,
+                "remaining": remaining,
+                "completed_today": self._today_pomodoro_count(),
+            }
         if command == "list":
             rows = []
             for timer in self.timers:
@@ -1822,6 +2200,56 @@ class MultiTimerApp(NSObject):
             "sort_by_expiry", self.tr("sort_by_expiry"),
             lambda sender: self._boolean_setting_changed("sort_by_expiry", sender),
         )
+        add_switch(
+            "show_pomodoro", self.tr("show_pomodoro"),
+            lambda sender: self._boolean_setting_changed("show_pomodoro", sender),
+        )
+
+        pomodoro_label = _section_label(self.tr("pomodoro"))
+        root.addArrangedSubview_(pomodoro_label)
+        pomodoro_card = _CardView.alloc().init()
+        pomodoro_settings = _vstack(5)
+        self.pomodoro_work_field, work_editor = self._make_segmented_time_field(
+            fmt_remaining(self.settings["pomodoro_work_seconds"]),
+            72,
+            lambda text: self._pomodoro_duration_changed("pomodoro_work_seconds", text),
+        )
+        self.pomodoro_break_field, break_editor = self._make_segmented_time_field(
+            fmt_remaining(self.settings["pomodoro_break_seconds"]),
+            72,
+            lambda text: self._pomodoro_duration_changed("pomodoro_break_seconds", text),
+        )
+        self._retain.extend((work_editor, break_editor))
+        for title_key, field in (
+            ("pomodoro_work_duration", self.pomodoro_work_field),
+            ("pomodoro_break_duration", self.pomodoro_break_field),
+        ):
+            row = _hstack(6)
+            label = NSTextField.labelWithString_(self.tr(title_key))
+            label.setFont_(NSFont.systemFontOfSize_(11.5))
+            row.addArrangedSubview_(label)
+            field_spacer = NSView.alloc().init()
+            row.addArrangedSubview_(field_spacer)
+            field_spacer.setContentHuggingPriority_forOrientation_(
+                1, NSLayoutConstraintOrientationHorizontal
+            )
+            row.addArrangedSubview_(field)
+            pomodoro_settings.addArrangedSubview_(row)
+        self.pomodoro_auto_switch = NSButton.alloc().init()
+        self.pomodoro_auto_switch.setButtonType_(NSSwitchButton)
+        self.pomodoro_auto_switch.setTitle_(self.tr("pomodoro_auto_cycle"))
+        self.pomodoro_auto_switch.setFont_(NSFont.systemFontOfSize_(11.5))
+        auto_action = _Action.alloc().initWithCallback_(
+            lambda sender: self._boolean_setting_changed("pomodoro_auto_cycle", sender)
+        )
+        self._retain.append(auto_action)
+        self.pomodoro_auto_switch.setTarget_(auto_action)
+        self.pomodoro_auto_switch.setAction_("invoke:")
+        pomodoro_settings.addArrangedSubview_(self.pomodoro_auto_switch)
+        _embed_with_insets(pomodoro_card, pomodoro_settings, top=7, right=8, bottom=7, left=8)
+        root.addArrangedSubview_(pomodoro_card)
+        pomodoro_card.leadingAnchor().constraintEqualToAnchor_(root.leadingAnchor()).setActive_(True)
+        pomodoro_card.trailingAnchor().constraintEqualToAnchor_(root.trailingAnchor()).setActive_(True)
 
         language_card = _CardView.alloc().init()
         language_row = _hstack(6)
@@ -1859,16 +2287,46 @@ class MultiTimerApp(NSObject):
         controls["launch_at_login"].setState_(
             NSControlStateValueOn if login_enabled else NSControlStateValueOff
         )
-        for key in ("show_remaining", "show_count", "sort_by_expiry"):
+        for key in ("show_remaining", "show_count", "sort_by_expiry", "show_pomodoro"):
             controls[key].setState_(
                 NSControlStateValueOn if self.settings.get(key) else NSControlStateValueOff
             )
+        self.pomodoro_work_field.setStringValue_(
+            fmt_remaining(self.settings["pomodoro_work_seconds"])
+        )
+        self.pomodoro_break_field.setStringValue_(
+            fmt_remaining(self.settings["pomodoro_break_seconds"])
+        )
+        self.pomodoro_auto_switch.setState_(
+            NSControlStateValueOn
+            if self.settings.get("pomodoro_auto_cycle")
+            else NSControlStateValueOff
+        )
+
+    def _pomodoro_duration_changed(self, key, text):
+        try:
+            seconds = parse_duration_text(text)
+        except ValueError:
+            return False
+        if seconds <= 0 or seconds > POMODORO_MAX_SECONDS:
+            return False
+        self.settings[key] = seconds
+        self._settings_revision = time.time()
+        self.settings["sync_revision"] = self._settings_revision
+        self._persist()
+        self._update_pomodoro_view()
+        return True
 
     def _boolean_setting_changed(self, key, sender):
         self.settings[key] = sender.state() == NSControlStateValueOn
+        self._settings_revision = time.time()
+        self.settings["sync_revision"] = self._settings_revision
         self._persist()
         if key == "sort_by_expiry":
             self._sort_timer_views()
+        elif key == "show_pomodoro":
+            self.pomodoro_card.setHidden_(not self.settings[key])
+            self._update_size()
         else:
             self._refresh_status_item()
 
@@ -2173,6 +2631,8 @@ class MultiTimerApp(NSObject):
         target_row.leadingAnchor().constraintEqualToAnchor_(composer.leadingAnchor()).setActive_(True)
         target_row.trailingAnchor().constraintEqualToAnchor_(composer.trailingAnchor()).setActive_(True)
 
+        self._build_pomodoro_card(root)
+
         # 进行中标题 + 列表
         # Notification permission guidance stays compact and appears only when needed.
         self.notification_warning = _hstack(5)
@@ -2211,14 +2671,266 @@ class MultiTimerApp(NSObject):
         self.popover.setAnimates_(True)
         self.popover.setDelegate_(self)
 
+    def _build_pomodoro_card(self, root):
+        card = _CardView.alloc().init()
+        stack = _vstack(5)
+        header = _hstack(5)
+        title = NSTextField.labelWithString_(self.tr("pomodoro"))
+        title.setFont_(NSFont.systemFontOfSize_weight_(12, NSFontWeightSemibold))
+        header.addArrangedSubview_(title)
+        spacer = NSView.alloc().init()
+        header.addArrangedSubview_(spacer)
+        spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
+        self.pomodoro_phase_label = _section_label(self.tr("pomodoro_ready"))
+        header.addArrangedSubview_(self.pomodoro_phase_label)
+        stack.addArrangedSubview_(header)
+
+        self.pomodoro_today_label = _section_label(
+            self.tr("pomodoro_today", count=self._today_pomodoro_count())
+        )
+        stack.addArrangedSubview_(self.pomodoro_today_label)
+
+        self.pomodoro_time_label = NSTextField.labelWithString_(
+            fmt_pomodoro_remaining(self.settings["pomodoro_work_seconds"])
+        )
+        self.pomodoro_time_label.setFont_(
+            NSFont.monospacedDigitSystemFontOfSize_weight_(20, NSFontWeightSemibold)
+        )
+        self.pomodoro_time_label.setTextColor_(NSColor.controlAccentColor())
+        stack.addArrangedSubview_(self.pomodoro_time_label)
+
+        actions = _hstack(4)
+        self.pomodoro_main_button = _button(
+            self.tr("pomodoro_start"), lambda sender: self._pomodoro_main_action(),
+            self._retain, accent=True, small=True,
+        )
+        self.pomodoro_skip_button = _button(
+            self.tr("pomodoro_skip"), lambda sender: self._skip_pomodoro_phase(),
+            self._retain, small=True,
+        )
+        self.pomodoro_stop_button = _button(
+            self.tr("pomodoro_stop"), lambda sender: self._stop_pomodoro(),
+            self._retain, small=True, quiet=True,
+        )
+        self.pomodoro_stats_button = _button(
+            "▥", lambda sender: self._open_pomodoro_stats(),
+            self._retain, small=True, quiet=True,
+        )
+        self.pomodoro_stats_button.setToolTip_(self.tr("pomodoro_stats"))
+        actions.addArrangedSubview_(self.pomodoro_main_button)
+        actions.addArrangedSubview_(self.pomodoro_skip_button)
+        actions.addArrangedSubview_(self.pomodoro_stats_button)
+        action_spacer = NSView.alloc().init()
+        actions.addArrangedSubview_(action_spacer)
+        action_spacer.setContentHuggingPriority_forOrientation_(1, NSLayoutConstraintOrientationHorizontal)
+        actions.addArrangedSubview_(self.pomodoro_stop_button)
+        stack.addArrangedSubview_(actions)
+
+        _embed_with_insets(card, stack, top=7, right=8, bottom=7, left=8)
+        root.addArrangedSubview_(card)
+        self._fill_width(card)
+        for row in (header, actions):
+            row.leadingAnchor().constraintEqualToAnchor_(stack.leadingAnchor()).setActive_(True)
+            row.trailingAnchor().constraintEqualToAnchor_(stack.trailingAnchor()).setActive_(True)
+        self.pomodoro_card = card
+        card.setHidden_(not self.settings.get("show_pomodoro", True))
+        self._update_pomodoro_view()
+
     def _fill_width(self, view):
         view.leadingAnchor().constraintEqualToAnchor_(self.root_stack.leadingAnchor()).setActive_(True)
         view.trailingAnchor().constraintEqualToAnchor_(self.root_stack.trailingAnchor()).setActive_(True)
+
+    # -- 番茄钟 -------------------------------------------------------------
+    def _today_pomodoro_count(self):
+        with self._stats_lock:
+            return int(
+                self.pomodoro_stats.get(datetime.date.today().isoformat(), 0)
+            )
+
+    def pomodoro_stats_snapshot(self):
+        with self._stats_lock:
+            return dict(self.pomodoro_stats)
+
+    def _open_pomodoro_stats(self):
+        if self._stats_server is None:
+            server = ThreadingHTTPServer(("127.0.0.1", 0), _StatsHandler)
+            server.app = self
+            server.token = uuid.uuid4().hex
+            self._stats_server = server
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        port = self._stats_server.server_address[1]
+        webbrowser.open(f"http://127.0.0.1:{port}/")
+
+    def clear_pomodoro_stats_from_server(self):
+        finished = threading.Event()
+
+        def clear():
+            try:
+                self._clear_pomodoro_stats()
+            finally:
+                finished.set()
+
+        AppHelper.callAfter(clear)
+        return finished.wait(5)
+
+    def _clear_pomodoro_stats(self):
+        with self._stats_lock:
+            self.pomodoro_stats = {}
+            save_pomodoro_stats(self.pomodoro_stats)
+        self._sync_to_icloud()
+        self._update_pomodoro_view()
+
+
+    def _record_completed_pomodoro(self, completed_at):
+        day = datetime.datetime.fromtimestamp(completed_at).date().isoformat()
+        with self._stats_lock:
+            self.pomodoro_stats[day] = int(self.pomodoro_stats.get(day, 0)) + 1
+            save_pomodoro_stats(self.pomodoro_stats)
+        self._sync_to_icloud()
+
+    def _pomodoro_main_action(self):
+        phase = self.pomodoro.get("phase")
+        if phase in {"idle", "ready"}:
+            self._start_pomodoro_work()
+            return
+        self._toggle_pomodoro_pause()
+
+    def _start_pomodoro_phase(self, phase):
+        duration_key = (
+            "pomodoro_work_seconds" if phase == "work" else "pomodoro_break_seconds"
+        )
+        duration = max(1, int(self.settings.get(duration_key) or 1))
+        self.pomodoro.update({
+            "phase": phase,
+            "end_ts": time.time() + duration,
+            "paused_at": 0.0,
+            "session_id": uuid.uuid4().hex,
+        })
+        self._update_pomodoro_view()
+        self._refresh_status_item()
+        self._update_size()
+
+    def _start_pomodoro_work(self):
+        self._start_pomodoro_phase("work")
+
+    def _start_pomodoro_break(self):
+        self._start_pomodoro_phase("break")
+
+    def _skip_pomodoro_phase(self):
+        phase = self.pomodoro.get("phase")
+        if phase == "work":
+            self._start_pomodoro_break()
+        elif phase == "break":
+            self._start_pomodoro_work()
+
+    def _toggle_pomodoro_pause(self):
+        if self.pomodoro.get("phase") not in {"work", "break"}:
+            return
+        now = time.time()
+        paused_at = float(self.pomodoro.get("paused_at") or 0)
+        if paused_at:
+            self.pomodoro["end_ts"] += now - paused_at
+            self.pomodoro["paused_at"] = 0.0
+        else:
+            self.pomodoro["paused_at"] = now
+        self._update_pomodoro_view()
+        self._refresh_status_item()
+
+    def _stop_pomodoro(self):
+        self.pomodoro.update({
+            "phase": "idle", "end_ts": 0.0, "paused_at": 0.0, "session_id": "",
+        })
+        self._update_pomodoro_view()
+        self._refresh_status_item()
+        self._update_size()
+
+    def _complete_pomodoro_phase(self):
+        phase = self.pomodoro.get("phase")
+        if phase not in {"work", "break"}:
+            return
+        completed_at = float(self.pomodoro.get("end_ts") or time.time())
+        self.pomodoro["phase"] = "transition"
+        next_phase = next_pomodoro_phase(
+            phase, bool(self.settings.get("pomodoro_auto_cycle"))
+        )
+        if phase == "work":
+            self._record_completed_pomodoro(completed_at)
+            self._start_pomodoro_break()
+            self._send_pomodoro_notification(
+                self.tr("pomodoro_work_done"),
+                self.tr(
+                    "pomodoro_break_started",
+                    minutes=max(1, int(self.settings["pomodoro_break_seconds"] / 60)),
+                ),
+                "work",
+                self.pomodoro["session_id"],
+            )
+            return
+        detail = (
+            self.tr("pomodoro_work_started")
+            if next_phase == "work"
+            else self.tr("pomodoro_waiting")
+        )
+        if next_phase == "work":
+            self._start_pomodoro_work()
+        else:
+            self.pomodoro.update({
+                "phase": "ready", "end_ts": 0.0, "paused_at": 0.0,
+                "session_id": uuid.uuid4().hex,
+            })
+            self._update_pomodoro_view()
+            self._refresh_status_item()
+            self._update_size()
+        self._send_pomodoro_notification(
+            self.tr("pomodoro_break_done"), detail, "break",
+            self.pomodoro["session_id"],
+        )
+
+    def _update_pomodoro_view(self):
+        if not getattr(self, "pomodoro_time_label", None):
+            return
+        phase = self.pomodoro.get("phase", "idle")
+        paused = bool(self.pomodoro.get("paused_at"))
+        if phase in {"work", "break"}:
+            seconds = pomodoro_remaining(self.pomodoro)
+        else:
+            seconds = self.settings.get("pomodoro_work_seconds", 25 * 60)
+        self.pomodoro_time_label.setStringValue_(fmt_pomodoro_remaining(seconds))
+        labels = {
+            "idle": "pomodoro_ready",
+            "ready": "pomodoro_next",
+            "work": "pomodoro_work",
+            "break": "pomodoro_break",
+        }
+        self.pomodoro_phase_label.setStringValue_(self.tr(labels[phase]))
+        self.pomodoro_today_label.setStringValue_(
+            self.tr("pomodoro_today", count=self._today_pomodoro_count())
+        )
+        self.pomodoro_main_button.setTitle_(
+            self.tr("pomodoro_resume" if paused else "pomodoro_pause")
+            if phase in {"work", "break"}
+            else self.tr("pomodoro_start")
+        )
+        active = phase in {"work", "break"}
+        self.pomodoro_skip_button.setTitle_(
+            self.tr("pomodoro_skip_break" if phase == "break" else "pomodoro_skip")
+        )
+        self.pomodoro_skip_button.setHidden_(phase not in {"work", "break"})
+        self.pomodoro_stop_button.setHidden_(not active)
+        color = (
+            NSColor.colorWithSRGBRed_green_blue_alpha_(0.85, 0.41, 0.36, 1.0)
+            if phase == "work"
+            else NSColor.colorWithSRGBRed_green_blue_alpha_(0.41, 0.66, 0.46, 1.0)
+            if phase == "break"
+            else NSColor.controlAccentColor()
+        )
+        self.pomodoro_time_label.setTextColor_(color)
 
     # -- 时长拉杆与目标时间 -------------------------------------------------
     def _make_segmented_time_field(self, text, width, commit):
         field = self._make_time_label(text, 11.5, NSFontWeightMedium, width)
         editor = _TimeEditController.alloc().initWithField_commit_(field, commit)
+        editor.setEventOwner_(self)
         field.setTimeController_(editor)
         field.setDelegate_(editor)
         return field, editor
@@ -2381,6 +3093,7 @@ class MultiTimerApp(NSObject):
             remaining_editor = _TimeEditController.alloc().initWithField_commit_(
                 remaining, self._make_remaining_commit(timer)
             )
+            remaining_editor.setEventOwner_(self)
             remaining.setTimeController_(remaining_editor)
             remaining.setDelegate_(remaining_editor)
             remaining.setToolTip_(self.tr("edit_remaining_tip"))
@@ -2398,6 +3111,7 @@ class MultiTimerApp(NSObject):
             target_editor = _TimeEditController.alloc().initWithField_commit_(
                 target, self._make_target_commit(timer)
             )
+            target_editor.setEventOwner_(self)
             target.setTimeController_(target_editor)
             target.setDelegate_(target_editor)
             target.setToolTip_(self.tr("edit_target_tip"))
@@ -2672,6 +3386,10 @@ class MultiTimerApp(NSObject):
         """Refresh custom accent-colored elements after System Settings changes."""
         for timer in self.timers:
             self._update_row(timer)
+        self._status_images.clear()
+        self._status_signature = None
+        self._update_pomodoro_view()
+        self._refresh_status_item()
 
     # -- 计时循环 ----------------------------------------------------------
     def _start_ticker(self):
@@ -2679,9 +3397,23 @@ class MultiTimerApp(NSObject):
             0.5, self, "tick:", None, True
         )
 
+    def _main_view_is_visible(self):
+        popover_visible = bool(
+            getattr(self, "popover", None) and self.popover.isShown()
+        )
+        preview_window = getattr(self, "_preview_window", None)
+        preview_visible = bool(preview_window is not None and preview_window.isVisible())
+        return popover_visible or preview_visible
+
     def tick_(self, _timer):
         newly_finished = []
-        panel_visible = bool(getattr(self, "popover", None) and self.popover.isShown())
+        panel_visible = self._main_view_is_visible()
+        pomodoro_active = self.pomodoro.get("phase") in {"work", "break"}
+        if pomodoro_active and not self.pomodoro.get("paused_at"):
+            if pomodoro_remaining(self.pomodoro) <= 0:
+                self._complete_pomodoro_phase()
+            elif panel_visible:
+                self._update_pomodoro_view()
         for timer in self.timers:
             if timer.get("finished"):
                 continue
@@ -2743,16 +3475,119 @@ class MultiTimerApp(NSObject):
         self._sort_timer_views()
         self._update_size()
 
-    # -- 通知 (UNUserNotificationCenter, 从 MultiTimer.app 发出) --------------
-    def _setup_notifications(self):
-        if os.environ.get("MULTITIMER_DISABLE_NOTIFICATIONS") == "1":
-            self.notif_center = None
+    # -- iCloud KVS（可用时同步设置与聚合统计）-------------------------------
+    def _setup_icloud_sync(self):
+        if not getattr(sys, "frozen", False):
             return
         try:
-            center = UNUserNotificationCenter.currentNotificationCenter()
+            store_class = objc.lookUpClass("NSUbiquitousKeyValueStore")
+            store = store_class.defaultStore()
+            self._icloud_store = store
+            NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+                self,
+                "icloudStoreDidChange:",
+                "NSUbiquitousKeyValueStoreDidChangeExternallyNotification",
+                store,
+            )
+            store.synchronize()
+            self._merge_icloud_payload(store.stringForKey_("multitimer.sync.v1"))
+            self._refresh_synced_pomodoro_ui()
         except Exception:
+            self._icloud_store = None
+
+    def icloudStoreDidChange_(self, _notification):
+        if self._icloud_store is None:
+            return
+        encoded = self._icloud_store.stringForKey_("multitimer.sync.v1")
+        AppHelper.callAfter(self._apply_icloud_change, encoded)
+
+    def _apply_icloud_change(self, encoded):
+        should_write_back = self._merge_icloud_payload(encoded)
+        self._refresh_synced_pomodoro_ui()
+        if should_write_back:
+            self._sync_to_icloud()
+
+    def _refresh_synced_pomodoro_ui(self):
+        if getattr(self, "_setting_controls", None):
+            self._refresh_settings_controls()
+        if getattr(self, "pomodoro_card", None) is not None:
+            self.pomodoro_card.setHidden_(
+                not self.settings.get("show_pomodoro", True)
+            )
+            self._update_pomodoro_view()
+
+    def _icloud_payload(self):
+        return json.dumps({
+            "settings": {
+                key: self.settings[key]
+                for key in DEFAULT_SETTINGS
+                if key in self.settings and key != "sync_revision"
+            },
+            "settings_revision": self._settings_revision,
+            "pomodoro_stats": self.pomodoro_stats_snapshot(),
+        }, ensure_ascii=False)
+
+    def _merge_icloud_payload(self, encoded):
+        if not encoded:
+            return False
+        try:
+            payload = json.loads(str(encoded))
+        except (TypeError, json.JSONDecodeError):
+            return False
+        stats_changed = False
+        if not isinstance(payload, dict):
+            return False
+        remote_settings = payload.get("settings")
+        raw_revision = payload.get("settings_revision") or 0
+        try:
+            remote_revision = float(raw_revision)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if not math.isfinite(remote_revision) or remote_revision < 0:
+            return False
+        if isinstance(remote_settings, dict) and remote_revision > self._settings_revision:
+            self.settings.update({
+                key: value for key, value in remote_settings.items()
+                if key in DEFAULT_SETTINGS and key != "sync_revision"
+            })
+            self._settings_revision = remote_revision
+            self.settings["sync_revision"] = remote_revision
+        remote_stats = payload.get("pomodoro_stats") if isinstance(payload, dict) else None
+        if isinstance(remote_stats, dict):
+            with self._stats_lock:
+                for day, count in remote_stats.items():
+                    if not isinstance(day, str) or not isinstance(count, (int, float)):
+                        continue
+                    if isinstance(count, bool) or not math.isfinite(float(count)):
+                        continue
+                    try:
+                        remote_count = max(0, int(count))
+                    except (OverflowError, ValueError):
+                        continue
+                    previous = int(self.pomodoro_stats.get(day, 0))
+                    merged = max(previous, remote_count)
+                    self.pomodoro_stats[day] = merged
+                    stats_changed = stats_changed or merged != previous
+                save_pomodoro_stats(self.pomodoro_stats)
+        return stats_changed
+
+    def _sync_to_icloud(self):
+        if self._icloud_store is None:
+            return
+        try:
+            self._icloud_store.setString_forKey_(
+                self._icloud_payload(), "multitimer.sync.v1"
+            )
+            self._icloud_store.synchronize()
+        except Exception:
+            self._icloud_store = None
+
+    # -- 通知 (UNUserNotificationCenter, 从 MultiTimer.app 发出) --------------
+    def _setup_notifications(self):
+        if not _can_use_user_notifications():
             self.notif_center = None
             return
+        center = UNUserNotificationCenter.currentNotificationCenter()
         self.notif_center = center
         center.setDelegate_(self)
         center.getNotificationSettingsWithCompletionHandler_(
@@ -2766,7 +3601,16 @@ class MultiTimerApp(NSObject):
         category = UNNotificationCategory.categoryWithIdentifier_actions_intentIdentifiers_options_(
             _NOTIF_CATEGORY, [check], [], UNNotificationCategoryOptionNone
         )
-        center.setNotificationCategories_({category})
+        extend = UNNotificationAction.actionWithIdentifier_title_options_(
+            _POMODORO_ACTION_EXTEND, self.tr("pomodoro_extend"),
+            UNNotificationActionOptionNone,
+        )
+        pomodoro_category = (
+            UNNotificationCategory.categoryWithIdentifier_actions_intentIdentifiers_options_(
+                _POMODORO_NOTIF_CATEGORY, [extend], [], UNNotificationCategoryOptionNone
+            )
+        )
+        center.setNotificationCategories_({category, pomodoro_category})
 
     def _update_notification_permission(self, status):
         if not getattr(self, "notification_warning", None):
@@ -2792,6 +3636,45 @@ class MultiTimerApp(NSObject):
             )
             return
         self._open_url("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+
+    def _send_pomodoro_notification(
+        self, title, detail, completed_phase, target_session_id
+    ):
+        sound_name = "Glass" if completed_phase == "work" else "Ping"
+        sound = NSSound.soundNamed_(sound_name)
+        if sound is not None:
+            sound.play()
+        if getattr(self, "notif_center", None) is None:
+            return
+        content = UNMutableNotificationContent.alloc().init()
+        content.setTitle_(title)
+        content.setSubtitle_(self.tr("pomodoro"))
+        content.setBody_(detail)
+        content.setCategoryIdentifier_(_POMODORO_NOTIF_CATEGORY)
+        content.setUserInfo_({
+            "completed_phase": completed_phase,
+            "target_session_id": target_session_id,
+        })
+        request = UNNotificationRequest.requestWithIdentifier_content_trigger_(
+            f"pomodoro-{uuid.uuid4().hex}", content, None
+        )
+        self.notif_center.addNotificationRequest_withCompletionHandler_(
+            request, lambda error: None
+        )
+
+    def _extend_pomodoro_by_five_minutes(self, target_session_id):
+        if (
+            not target_session_id
+            or target_session_id != self.pomodoro.get("session_id")
+        ):
+            return
+        if self.pomodoro.get("phase") not in {"work", "break"}:
+            return
+        self.pomodoro["end_ts"] = max(
+            float(self.pomodoro.get("end_ts") or time.time()), time.time()
+        ) + 5 * 60
+        self._update_pomodoro_view()
+        self._refresh_status_item()
 
     def _send_finish_notification(self, timer):
         if getattr(self, "notif_center", None) is None:
@@ -2842,6 +3725,10 @@ class MultiTimerApp(NSObject):
                 info = response.notification().request().content().userInfo()
                 timer_id = info.get("timer_id") if info else None
                 self._check_by_id(timer_id)
+            elif action_id == _POMODORO_ACTION_EXTEND:
+                info = response.notification().request().content().userInfo()
+                target_session_id = info.get("target_session_id") if info else None
+                self._extend_pomodoro_by_five_minutes(target_session_id)
         finally:
             completion()
 
@@ -2855,6 +3742,7 @@ class MultiTimerApp(NSObject):
         for timer in self.timers:
             if not timer.get("finished"):
                 self._update_row(timer)
+        self._update_pomodoro_view()
         self._update_size()
         btn = self.status_item.button()
         self.popover.showRelativeToRect_ofView_preferredEdge_(btn.bounds(), btn, NSMinYEdge)
@@ -2864,6 +3752,15 @@ class MultiTimerApp(NSObject):
     def _show_preview_window(self):
         """Show the production content in a normal window for visual QA only."""
         self.target_field.setStringValue_("15:30:00")
+        preview_phase = os.environ.get("MULTITIMER_PREVIEW_POMODORO")
+        if preview_phase in {"work", "break"}:
+            self.pomodoro.update({
+                "phase": preview_phase,
+                "end_ts": time.time() + 12 * 60 + 34,
+                "paused_at": 0.0,
+            })
+            self._update_pomodoro_view()
+            self._refresh_status_item()
         preview_view = self.content_view
         if os.environ.get("MULTITIMER_PREVIEW_VIEW") == "settings":
             if not getattr(self, "_settings_vc", None):
@@ -2915,6 +3812,7 @@ class MultiTimerApp(NSObject):
 
     def _persist(self):
         save_state(self.timers, self._skipped_update, self.settings)
+        self._sync_to_icloud()
 
     def _quit(self):
         self._persist()
@@ -2923,6 +3821,15 @@ class MultiTimerApp(NSObject):
     def applicationWillTerminate_(self, _notification):
         if self._did_finish_launching:
             self._persist()
+        if self._key_monitor is not None:
+            NSEvent.removeMonitor_(self._key_monitor)
+            self._key_monitor = None
+        if self._stats_server is not None:
+            self._stats_server.shutdown()
+            self._stats_server.server_close()
+            self._stats_server = None
+        if self._icloud_store is not None:
+            NSNotificationCenter.defaultCenter().removeObserver_(self)
         manager = NSAppleEventManager.sharedAppleEventManager()
         manager.removeEventHandlerForEventClass_andEventID_(
             int.from_bytes(b"GURL", "big"), int.from_bytes(b"GURL", "big")
@@ -2943,7 +3850,9 @@ class MultiTimerApp(NSObject):
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in {"start", "list", "pause", "cancel", "help", "--help", "-h"}:
+    if len(sys.argv) > 1 and sys.argv[1] in {
+        "start", "list", "pause", "cancel", "pomodoro", "help", "--help", "-h",
+    }:
         raise SystemExit(_run_cli(sys.argv[1:]))
     if _relaunch_via_launchservices_if_needed():
         return

@@ -77,7 +77,13 @@ brew uninstall --cask multi-timer
 6. 点击“秒表”开始正向计时，并使用“计圈”记录圈次。
 7. 时间到后，选择“重新计时”或“已检查”。
 
-点击右上角的齿轮可设置登录时启动、菜单栏剩余时间/数量和最近到期优先排序。开关修改后立即保存，不需要再点“保存”。语言由 macOS“语言与地区”中的应用语言统一管理，设置页提供系统入口。通知被关闭时，面板会直接显示权限状态和系统设置入口。
+### 番茄钟
+
+番茄钟位于普通计时器列表之外，默认工作 25 分钟、休息 5 分钟。工作结束后自动开始休息；开启自动循环后，休息结束自动开始下一轮工作，否则等待你点击“开始工作”。工作和休息均支持暂停、继续、跳过与停止，菜单栏会优先显示 `MM:SS` 和对应的珊瑚红/鼠尾草绿状态图标。
+
+番茄钟卡片显示今日完成数量。点击统计图标可在仅绑定 `127.0.0.1` 的本地网页中查看最近 30 天趋势、导出 CSV 或清空统计。运行中的番茄阶段不会在重启后恢复。
+
+点击右上角的齿轮可设置登录时启动、菜单栏剩余时间/数量、最近到期排序、番茄工作/休息时长、自动循环和是否显示番茄模块。开关修改后立即保存，不需要再点“保存”。语言由 macOS“语言与地区”中的应用语言统一管理，设置页提供系统入口。通知被关闭时，面板会直接显示权限状态和系统设置入口。
 
 ## 关于与更新
 
@@ -89,6 +95,10 @@ MultiTimer 每次启动都会通过 GitHub Release 检查最新版。发现新�
 
 ## 特性
 
+- 独立番茄钟：工作自动转休息、可选自动循环、暂停、跳过和停止
+- 番茄钟菜单栏 `MM:SS`、工作/休息状态色与不同提示音
+- 今日完成数量、最近 30 天本地趋势、CSV 导出和统计清空
+- 番茄钟 CLI、URL Scheme 和通知“延长 5 分钟”操作
 - 同时运行多个倒计时
 - 秒表模式与圈次记录
 - 暂停、复制、置顶和最近到期排序
@@ -104,9 +114,10 @@ MultiTimer 每次启动都会通过 GitHub Release 检查最新版。发现新�
 - 按钮和计时颜色跟随系统强调色
 - 原子保存未结束的任务和设置，并兼容旧版状态文件
 - 只驻留菜单栏，不占用 Dock
-- 无账户、无遥测，数据仅保存在本机
+- 无账户、无遥测；默认仅使用本地数据
+- 具备 Apple iCloud KVS entitlement 的签名构建可同步设置与聚合统计，运行状态不上传
 
-本地状态保存在 `~/.config/multitimer/state.json`。
+普通状态保存在 `~/.config/multitimer/state.json`，番茄完成统计保存在 `~/.config/multitimer/pomodoro-stats.json`。当前 ad-hoc 公共构建没有 iCloud entitlement，会安全使用本地存储。
 
 ## 自动化
 
@@ -124,9 +135,15 @@ multitimer start --stopwatch Focus
 multitimer list
 multitimer pause Tea
 multitimer cancel Tea
+
+multitimer pomodoro start
+multitimer pomodoro status
+multitimer pomodoro pause
+multitimer pomodoro skip
+multitimer pomodoro stop
 ```
 
-这些命令只使用本机 Unix Socket，不开放网络端口。
+也可以通过 `multitimer://pomodoro/start` 开始番茄工作。CLI 只使用本机 Unix Socket。统计网页仅在用户点击后临时绑定 `127.0.0.1`，不会对局域网开放。
 
 ## 开发者
 

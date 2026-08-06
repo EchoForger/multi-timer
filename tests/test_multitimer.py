@@ -1,6 +1,9 @@
+import datetime
 import json
 import tempfile
+import threading
 import time
+import urllib.request
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -78,6 +81,18 @@ class MultiTimerLogicTests(unittest.TestCase):
             "command": "start", "kind": "countdown", "name": "Green Tea", "seconds": 300,
         })
 
+    def test_multitimer_url_pomodoro_actions(self):
+        self.assertEqual(
+            multitimer._parse_multitimer_url("multitimer://pomodoro/start"),
+            {"command": "pomodoro", "action": "start"},
+        )
+        self.assertEqual(
+            multitimer._parse_multitimer_url("multitimer://pomodoro/status"),
+            {"command": "pomodoro", "action": "status"},
+        )
+        with self.assertRaises(ValueError):
+            multitimer._parse_multitimer_url("multitimer://pomodoro/invalid")
+
     def test_multitimer_url_stopwatch(self):
         request = multitimer._parse_multitimer_url(
             "multitimer://start?name=Focus&mode=stopwatch"
@@ -142,6 +157,223 @@ class MultiTimerLogicTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 multitimer.parse_clock_text(text, now)
 
+    def test_source_mode_disables_user_notifications(self):
+        with mock.patch.object(multitimer, "_current_app_bundle_path", return_value=None):
+            self.assertFalse(multitimer._can_use_user_notifications())
+
+    def test_app_bundle_enables_user_notifications(self):
+        with mock.patch.object(
+            multitimer, "_current_app_bundle_path",
+            return_value=Path("/Applications/MultiTimer.app"),
+        ):
+            self.assertTrue(multitimer._can_use_user_notifications())
+        with (
+            mock.patch.object(
+                multitimer, "_current_app_bundle_path",
+                return_value=Path("/Applications/MultiTimer.app"),
+            ),
+            mock.patch.dict(
+                multitimer.os.environ,
+                {"MULTITIMER_DISABLE_NOTIFICATIONS": "1"},
+            ),
+        ):
+            self.assertFalse(multitimer._can_use_user_notifications())
+
+    def test_pomodoro_stats_reject_non_finite_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.json"
+            path.write_text(
+                json.dumps({"2026-08-04": 2, "nan": float("nan"), "inf": float("inf")}),
+                encoding="utf-8",
+            )
+            self.assertEqual(multitimer.load_pomodoro_stats(path), {"2026-08-04": 2})
+
+    def test_pomodoro_stats_round_trip_series_csv_and_html(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.json"
+            stats = {"2026-08-04": 2, "2026-08-05": 3}
+            multitimer.save_pomodoro_stats(stats, path)
+            self.assertEqual(multitimer.load_pomodoro_stats(path), stats)
+            series = multitimer.pomodoro_stats_last_days(
+                stats, days=3, today=datetime.date(2026, 8, 5)
+            )
+            self.assertEqual([item["count"] for item in series], [0, 2, 3])
+            export = multitimer.pomodoro_stats_csv(
+                stats, days=3, today=datetime.date(2026, 8, 5)
+            )
+            self.assertIn("2026-08-05,3", export)
+            page = multitimer.pomodoro_stats_html(series, "secret")
+            self.assertIn("最近 30 天专注统计", page)
+            self.assertIn("/clear?token=secret", page)
+
+    def test_local_stats_server_serves_html_csv_and_clear(self):
+        app = mock.Mock()
+        app.pomodoro_stats_snapshot.return_value = {"2026-08-05": 3}
+        app.clear_pomodoro_stats_from_server.return_value = True
+        server = multitimer.ThreadingHTTPServer(("127.0.0.1", 0), multitimer._StatsHandler)
+        server.app = app
+        server.token = "secret"
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            self.assertIn("专注统计", urllib.request.urlopen(base + "/").read().decode())
+            self.assertIn(
+                "completed_pomodoros",
+                urllib.request.urlopen(base + "/stats.csv").read().decode(),
+            )
+            request = urllib.request.Request(
+                base + "/clear?token=secret", method="POST"
+            )
+            self.assertEqual(urllib.request.urlopen(request).status, 204)
+            app.clear_pomodoro_stats_from_server.assert_called_once_with()
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_pomodoro_control_requests_cover_all_actions(self):
+        app = multitimer.MultiTimerApp.alloc().init()
+        app.settings = dict(multitimer.DEFAULT_SETTINGS)
+        app.pomodoro_stats = {}
+        app.pomodoro = {
+            "phase": "idle", "end_ts": 0.0, "paused_at": 0.0, "session_id": "",
+        }
+        app._update_pomodoro_view = mock.Mock()
+        app._refresh_status_item = mock.Mock()
+        app._update_size = mock.Mock()
+        started = app._execute_control_request({"command": "pomodoro", "action": "start"})
+        self.assertEqual(started["phase"], "work")
+        paused = app._execute_control_request({"command": "pomodoro", "action": "pause"})
+        self.assertTrue(paused["paused"])
+        skipped = app._execute_control_request({"command": "pomodoro", "action": "skip"})
+        self.assertEqual(skipped["phase"], "break")
+        skipped_break = app._execute_control_request({"command": "pomodoro", "action": "skip"})
+        self.assertEqual(skipped_break["phase"], "work")
+        stopped = app._execute_control_request({"command": "pomodoro", "action": "stop"})
+        self.assertEqual(stopped["phase"], "idle")
+        with self.assertRaisesRegex(ValueError, "not active"):
+            app._execute_control_request({"command": "pomodoro", "action": "pause"})
+
+    def test_control_request_rejects_excessive_duration(self):
+        app = multitimer.MultiTimerApp.alloc().init()
+        app.settings = dict(multitimer.DEFAULT_SETTINGS)
+        app.timers = []
+        app._add_timer_row = mock.Mock()
+        with self.assertRaisesRegex(ValueError, "24 hours"):
+            app._execute_control_request({
+                "command": "start",
+                "kind": "countdown",
+                "seconds": multitimer.MAX_DURATION_SECONDS + 1,
+            })
+
+    def test_icloud_payload_rejects_invalid_values(self):
+        app = multitimer.MultiTimerApp.alloc().init()
+        app.settings = dict(multitimer.DEFAULT_SETTINGS)
+        app.pomodoro_stats = {"2026-08-05": 3}
+        app._settings_revision = 10.0
+        self.assertFalse(app._merge_icloud_payload(json.dumps({
+            "settings_revision": float("nan"),
+            "pomodoro_stats": {"2026-08-05": float("inf")},
+        })))
+        self.assertEqual(app.pomodoro_stats, {"2026-08-05": 3})
+
+    def test_icloud_payload_merges_settings_and_maximum_counts(self):
+        app = multitimer.MultiTimerApp.alloc().init()
+        app.settings = dict(multitimer.DEFAULT_SETTINGS)
+        app.pomodoro_stats = {"2026-08-05": 3}
+        app._settings_revision = 10.0
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            multitimer, "POMODORO_STATS_PATH", Path(directory) / "stats.json"
+        ):
+            app._merge_icloud_payload(json.dumps({
+                "settings": {"show_pomodoro": False, "unknown": True},
+                "settings_revision": 20.0,
+                "pomodoro_stats": {"2026-08-05": 2, "2026-08-04": 4},
+            }))
+        self.assertFalse(app.settings["show_pomodoro"])
+        self.assertNotIn("unknown", app.settings)
+        self.assertEqual(app.pomodoro_stats["2026-08-05"], 3)
+        self.assertEqual(app.pomodoro_stats["2026-08-04"], 4)
+
+    def test_completed_work_is_consumed_once_and_uses_deadline_date(self):
+        app = multitimer.MultiTimerApp.alloc().init()
+        app.settings = dict(multitimer.DEFAULT_SETTINGS)
+        deadline = datetime.datetime(2026, 8, 4, 23, 59).timestamp()
+        app.pomodoro = {
+            "phase": "work", "end_ts": deadline, "paused_at": 0.0,
+            "session_id": "work-session",
+        }
+        app.pomodoro_stats = {}
+        app._update_pomodoro_view = mock.Mock()
+        app._refresh_status_item = mock.Mock()
+        app._update_size = mock.Mock()
+        app._sync_to_icloud = mock.Mock()
+        app._send_pomodoro_notification = mock.Mock()
+        original_record = app._record_completed_pomodoro
+
+        def record_with_reentry(completed_at):
+            app._complete_pomodoro_phase()
+            original_record(completed_at)
+
+        app._record_completed_pomodoro = record_with_reentry
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            multitimer, "POMODORO_STATS_PATH", Path(directory) / "stats.json"
+        ):
+            app._complete_pomodoro_phase()
+        self.assertEqual(app.pomodoro_stats, {"2026-08-04": 1})
+        self.assertEqual(app.pomodoro["phase"], "break")
+
+    def test_old_notification_cannot_extend_a_new_session(self):
+        app = multitimer.MultiTimerApp.alloc().init()
+        app.pomodoro = {
+            "phase": "break", "end_ts": 1_000.0, "paused_at": 0.0,
+            "session_id": "current",
+        }
+        app._update_pomodoro_view = mock.Mock()
+        app._refresh_status_item = mock.Mock()
+        app._extend_pomodoro_by_five_minutes("old")
+        self.assertEqual(app.pomodoro["end_ts"], 1_000.0)
+        with mock.patch.object(multitimer.time, "time", return_value=900.0):
+            app._extend_pomodoro_by_five_minutes("current")
+        self.assertEqual(app.pomodoro["end_ts"], 1_300.0)
+
+    def test_pomodoro_display_uses_minute_second_format(self):
+        self.assertEqual(multitimer.fmt_pomodoro_remaining(0), "00:00")
+        self.assertEqual(multitimer.fmt_pomodoro_remaining(1), "00:01")
+        self.assertEqual(multitimer.fmt_pomodoro_remaining(61), "01:01")
+        self.assertEqual(multitimer.fmt_pomodoro_remaining(25 * 60), "25:00")
+        self.assertEqual(multitimer.fmt_pomodoro_remaining(59 * 60 + 59), "59:59")
+        self.assertEqual(multitimer.fmt_pomodoro_remaining(3600), "59:59")
+
+    def test_pomodoro_phase_transitions_follow_auto_cycle_setting(self):
+        self.assertEqual(multitimer.next_pomodoro_phase("work", False), "break")
+        self.assertEqual(multitimer.next_pomodoro_phase("work", True), "break")
+        self.assertEqual(multitimer.next_pomodoro_phase("break", False), "ready")
+        self.assertEqual(multitimer.next_pomodoro_phase("break", True), "work")
+
+    def test_preview_window_counts_as_visible_main_view(self):
+        app = multitimer.MultiTimerApp.alloc().init()
+        app.popover = mock.Mock()
+        app.popover.isShown.return_value = False
+        app._preview_window = mock.Mock()
+        app._preview_window.isVisible.return_value = True
+        self.assertTrue(app._main_view_is_visible())
+        app._preview_window.isVisible.return_value = False
+        self.assertFalse(app._main_view_is_visible())
+
+    def test_pomodoro_remaining_freezes_while_paused(self):
+        pomodoro = {"phase": "work", "end_ts": 1_300.0, "paused_at": 1_100.0}
+        self.assertEqual(multitimer.pomodoro_remaining(pomodoro, now=1_250), 200)
+        pomodoro["paused_at"] = 0.0
+        self.assertEqual(multitimer.pomodoro_remaining(pomodoro, now=1_250), 50)
+        pomodoro["phase"] = "ready"
+        self.assertEqual(multitimer.pomodoro_remaining(pomodoro, now=1_250), 0)
+
+    def test_pomodoro_settings_have_backward_compatible_defaults(self):
+        self.assertEqual(multitimer.DEFAULT_SETTINGS["pomodoro_work_seconds"], 25 * 60)
+        self.assertEqual(multitimer.DEFAULT_SETTINGS["pomodoro_break_seconds"], 5 * 60)
+        self.assertFalse(multitimer.DEFAULT_SETTINGS["pomodoro_auto_cycle"])
+
     def test_paused_timer_keeps_its_remaining_time_and_duration(self):
         now = time.time()
         timer = {
@@ -177,6 +409,7 @@ class MultiTimerLogicTests(unittest.TestCase):
             payload = json.loads(state_path.read_text())
             self.assertEqual(payload["schema_version"], 3)
             self.assertNotIn("presets", payload)
+            self.assertNotIn("pomodoro", payload)
             self.assertEqual(
                 set(payload["timers"][0]),
                 {"id", "label", "kind", "start_ts", "end_ts", "paused_at", "pinned", "finished", "laps"},
@@ -281,6 +514,15 @@ class MultiTimerLogicTests(unittest.TestCase):
             with self.subTest(duration=duration):
                 position = multitimer.slider_position_for_seconds(duration)
                 self.assertAlmostEqual(seconds(position), duration, delta=1)
+
+    def test_time_segment_digit_input_replaces_selected_pair(self):
+        replace = multitimer.replace_time_segment_digit
+        self.assertEqual(replace("00:25:00", 0, "1", 0), "01:25:00")
+        self.assertEqual(replace("01:25:00", 0, "2", 1), "12:25:00")
+        self.assertEqual(replace("00:25:00", 1, "1", 0), "00:01:00")
+        self.assertEqual(replace("00:01:00", 1, "0", 1), "00:10:00")
+        self.assertEqual(replace("00:25:00", 2, "4", 0), "00:25:04")
+        self.assertEqual(replace("00:25:04", 2, "5", 1), "00:25:45")
 
     def test_time_segment_hit_testing_selects_each_pair(self):
         segment = multitimer.time_segment_for_position

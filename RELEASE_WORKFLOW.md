@@ -48,7 +48,7 @@ git log -1 --oneline
 设置本次版本变量，后续命令统一引用：
 
 ```bash
-release_version="0.5.0"
+release_version="0.6.0"
 ```
 
 必须同步修改：
@@ -215,7 +215,7 @@ file dist/MultiTimer.app/Contents/MacOS/MultiTimer
 
 - [ ] 版本号正确。
 - [ ] `LSUIElement` 为 `true`。
-- [ ] Bundle ID 为 `io.github.echoforger.multitimer.menuapp2`。
+- [ ] Bundle ID 为 `io.github.echoforger.multitimer`。
 - [ ] `CFBundleURLTypes` 包含 `multitimer`。
 - [ ] 当前构建架构与 Release 说明一致。
 - [ ] `codesign --verify` 通过。
@@ -268,7 +268,7 @@ dist/MultiTimer.app/Contents/MacOS/MultiTimer list
 ## 9. 生成与验证 DMG
 
 ```bash
-release_version="0.5.0"
+release_version="0.6.0"
 release_stage=$(mktemp -d /private/tmp/multitimer-dmg.XXXXXX)
 
 ditto dist/MultiTimer.app "$release_stage/MultiTimer.app"

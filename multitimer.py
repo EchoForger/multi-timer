@@ -168,8 +168,10 @@ DEFAULT_SETTINGS = {
     "pomodoro_work_seconds": 25 * 60,
     "pomodoro_break_seconds": 5 * 60,
     "pomodoro_auto_cycle": False,
-    "show_pomodoro": True,
-    "sync_revision": 0.0,
+        "show_pomodoro": True,
+        "update_automatically": True,
+        "update_preference_set": False,
+        "sync_revision": 0.0,
 }
 
 STRINGS = {
@@ -197,7 +199,8 @@ STRINGS = {
         "pause": "暂停", "resume": "继续", "lap": "计圈", "laps": "{count} 圈 · 最近 {latest}",
         "duplicate": "复制", "pin": "置顶", "unpin": "取消置顶",
         "settings": "设置", "quit": "退出 MultiTimer", "about": "关于 MultiTimer",
-        "notification_denied": "通知已关闭，计时结束时可能无法提醒。", "open_settings": "打开系统设置",
+        "notification_denied": "通知权限未开启。允许通知后，计时器和番茄钟才能在后台提醒你。", "open_settings": "打开系统设置",
+        "permission_required": "需要通知权限", "permission_required_detail": "MultiTimer 必须获得通知权限才能正常提供计时结束提醒。请在系统设置中允许通知；在允许前应用不会启动。", "quit": "退出",
         "settings_title": "MultiTimer 设置", "launch_at_login": "登录时自动启动",
         "show_remaining": "菜单栏显示最近剩余时间", "show_count": "菜单栏显示计时器数量",
         "sort_by_expiry": "最近到期优先", "language": "应用语言",
@@ -215,7 +218,7 @@ STRINGS = {
         "checking": "正在检查 MultiTimer 更新…", "check_failed": "检查更新失败",
         "latest": "已是最新版", "latest_detail": "你正在使用 MultiTimer {version}。",
         "found_update": "发现 MultiTimer {version}", "current_version": "当前版本：{version}", "whats_new": "新版特性",
-        "update_now": "立即更新", "skip_version": "跳过这个版本", "brew_will_run": "Homebrew 将在后台运行：",
+        "update_now": "立即安装并重启", "install_on_quit": "退出时安装", "skip_version": "暂不安装", "auto_update": "以后自动下载并安装更新", "brew_will_run": "Homebrew 将在后台运行：",
         "update_failed": "更新未完成", "release_page": "打开 Release 页", "update_installed": "更新已安装",
         "update_installed_detail": "MultiTimer {version} 已通过 {source} 安装完成。重新启动后生效。",
         "restart_now": "现在重新启动",
@@ -244,7 +247,8 @@ STRINGS = {
         "pause": "Pause", "resume": "Resume", "lap": "Lap", "laps": "{count} laps · latest {latest}",
         "duplicate": "Duplicate", "pin": "Pin", "unpin": "Unpin",
         "settings": "Settings", "quit": "Quit MultiTimer", "about": "About MultiTimer",
-        "notification_denied": "Notifications are off, so completed timers may not alert you.", "open_settings": "Open Settings",
+        "notification_denied": "Notifications are not enabled. Allow them so timers and Pomodoro can alert you in the background.", "open_settings": "Open Settings",
+        "permission_required": "Notification Permission Required", "permission_required_detail": "MultiTimer needs notification permission to alert you when a timer finishes. Allow notifications in System Settings; the app will not start until you do.", "quit": "Quit",
         "settings_title": "MultiTimer Settings", "launch_at_login": "Launch at Login",
         "show_remaining": "Show nearest remaining time", "show_count": "Show active timer count",
         "sort_by_expiry": "Sort by nearest expiry", "language": "App Language",
@@ -262,7 +266,7 @@ STRINGS = {
         "checking": "Checking for MultiTimer updates…", "check_failed": "Update Check Failed",
         "latest": "You're Up to Date", "latest_detail": "You're using MultiTimer {version}.",
         "found_update": "MultiTimer {version} is Available", "current_version": "Current version: {version}", "whats_new": "What's New",
-        "update_now": "Update Now", "skip_version": "Skip This Version", "brew_will_run": "Homebrew will run in the background:",
+        "update_now": "Install and Relaunch", "install_on_quit": "Install on Quit", "skip_version": "Don't Install", "auto_update": "Automatically download and install updates in the future", "brew_will_run": "Homebrew will run in the background:",
         "update_failed": "Update Not Completed", "release_page": "Open Release Page", "update_installed": "Update Installed",
         "update_installed_detail": "MultiTimer {version} was installed via {source}. Restart to use it.",
         "restart_now": "Restart Now",
@@ -1739,6 +1743,10 @@ class MultiTimerApp(NSObject):
         self._retain = []         # 全局 target 保活
         self._closed_at = 0.0
         self._did_finish_launching = False
+        self._launch_ready = False
+        self._permission_prompt_active = False
+        self._pending_update = None
+        self._relaunch_after_update = False
         self._update_in_progress = False
         self._control_server = None
         self._control_lock = None
@@ -1761,6 +1769,58 @@ class MultiTimerApp(NSObject):
         if self._did_finish_launching:
             return
         self._did_finish_launching = True
+        if not self._prepare_launch_permissions():
+            return
+        self._finish_launch()
+
+    def _prepare_launch_permissions(self):
+        if not _can_use_user_notifications():
+            return True
+        center = UNUserNotificationCenter.currentNotificationCenter()
+        self.notif_center = center
+        center.getNotificationSettingsWithCompletionHandler_(
+            lambda settings: AppHelper.callAfter(
+                self._handle_launch_permission,
+                int(settings.authorizationStatus()),
+            )
+        )
+        return False
+
+    def _handle_launch_permission(self, status):
+        self._notification_status = status
+        if status not in (UNAuthorizationStatusDenied, UNAuthorizationStatusNotDetermined):
+            self._finish_launch()
+            return
+        if status == UNAuthorizationStatusNotDetermined:
+            self.notif_center.requestAuthorizationWithOptions_completionHandler_(
+                UNAuthorizationOptionAlert | UNAuthorizationOptionSound,
+                lambda _granted, _error: self.notif_center.getNotificationSettingsWithCompletionHandler_(
+                    lambda settings: AppHelper.callAfter(
+                        self._handle_launch_permission,
+                        int(settings.authorizationStatus()),
+                    )
+                ),
+            )
+            return
+        if self._permission_prompt_active:
+            return
+        self._permission_prompt_active = True
+        response = self._show_alert(
+            self.tr("permission_required"),
+            self.tr("permission_required_detail"),
+            (self.tr("open_settings"), self.tr("quit")),
+        )
+        self._permission_prompt_active = False
+        if response == 1000:
+            self._open_notification_settings()
+            AppHelper.callLater(1.5, self._prepare_launch_permissions)
+        else:
+            NSApp.terminate_(None)
+
+    def _finish_launch(self):
+        if self._launch_ready:
+            return
+        self._launch_ready = True
         self._build_main_menu()
         self._build_status_item()
         self._build_popover()
@@ -2121,6 +2181,33 @@ class MultiTimerApp(NSObject):
         NSApp.activateIgnoringOtherApps_(True)
         return alert.runModal()
 
+    def _show_update_alert(self, title, detail):
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_(title)
+        alert.setInformativeText_(detail)
+        icon = self._app_icon()
+        if icon is not None:
+            alert.setIcon_(icon)
+        accessory = NSStackView.alloc().init()
+        accessory.setOrientation_(1)
+        accessory.setSpacing_(8)
+        accessory.setAlignment_(0)
+        checkbox = NSButton.alloc().init()
+        checkbox.setButtonType_(NSSwitchButton)
+        checkbox.setTitle_(self.tr("auto_update"))
+        checkbox.setState_(
+            NSControlStateValueOn
+            if self.settings.get("update_automatically", True)
+            else NSControlStateValueOff
+        )
+        accessory.addArrangedSubview_(checkbox)
+        alert.setAccessoryView_(accessory)
+        alert.addButtonWithTitle_(self.tr("skip_version"))
+        alert.addButtonWithTitle_(self.tr("install_on_quit"))
+        alert.addButtonWithTitle_(self.tr("update_now"))
+        NSApp.activateIgnoringOtherApps_(True)
+        return alert.runModal(), checkbox.state() == NSControlStateValueOn
+
     def _open_url(self, url):
         NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
 
@@ -2418,6 +2505,13 @@ class MultiTimerApp(NSObject):
             self._update_in_progress = False
             self.status_item.button().setToolTip_(APP_NAME)
             return
+        if (
+            automatic
+            and self.settings.get("update_preference_set", False)
+            and self.settings.get("update_automatically", True)
+        ):
+            self._start_update_install(release, latest, source, relaunch=True)
+            return
 
         notes = str(release.get("body") or "该版本包含功能改进与问题修复。").strip()
         if len(notes) > 1100:
@@ -2429,19 +2523,24 @@ class MultiTimerApp(NSObject):
                 f"\n\n{self.tr('brew_will_run')}\n"
                 f"{brew} upgrade --cask --no-quit echoforger/multi-timer/multi-timer"
             )
-        response = self._show_alert(
-            self.tr("found_update", version=latest),
-            update_detail,
-            (self.tr("update_now"), self.tr("later"), self.tr("skip_version")),
+        response, auto_update = self._show_update_alert(
+            self.tr("found_update", version=latest), update_detail
         )
-        if response == 1002:
+        self.settings["update_automatically"] = auto_update
+        self.settings["update_preference_set"] = True
+        self._persist()
+        if response == 1000:
             self._skipped_update = latest
             self._persist()
-        if response != 1000:
             self._update_in_progress = False
             self.status_item.button().setToolTip_(APP_NAME)
             return
+        self._start_update_install(
+            release, latest, source, relaunch=response == 1002
+        )
 
+    def _start_update_install(self, release, latest, source, relaunch):
+        self._relaunch_after_update = relaunch
         if source == "homebrew":
             self.status_item.button().setToolTip_(f"正在通过 Homebrew 更新到 {latest}…")
             threading.Thread(target=self._brew_update_worker, args=(latest,), daemon=True).start()
@@ -2454,7 +2553,6 @@ class MultiTimerApp(NSObject):
                 daemon=True,
             ).start()
             return
-
         self._update_in_progress = False
         self.status_item.button().setToolTip_(APP_NAME)
         self._open_url(str(release.get("html_url") or f"{APP_REPOSITORY}/releases/latest"))
@@ -2490,13 +2588,13 @@ class MultiTimerApp(NSObject):
     def _update_succeeded(self, latest, source):
         self._update_in_progress = False
         self.status_item.button().setToolTip_(APP_NAME)
-        response = self._show_alert(
+        if self._relaunch_after_update:
+            self._relaunch()
+            return
+        self._show_alert(
             self.tr("update_installed"),
             self.tr("update_installed_detail", version=latest, source=source),
-            (self.tr("restart_now"), self.tr("later")),
         )
-        if response == 1000:
-            self._relaunch()
 
     def _relaunch(self):
         bundle_path = _best_installed_bundle_path()

@@ -495,6 +495,50 @@ class MultiTimerLogicTests(unittest.TestCase):
             self.assertAlmostEqual(multitimer.timer_elapsed(watch), 12, places=0)
             self.assertEqual(restored["settings"], multitimer.DEFAULT_SETTINGS)
 
+    def test_launch_waits_for_notification_permission(self):
+        app = multitimer.MultiTimerApp.alloc().init()
+        app._finish_launch = mock.Mock()
+        app._show_alert = mock.Mock(return_value=1000)
+        app._open_notification_settings = mock.Mock()
+        with mock.patch.object(multitimer.AppHelper, "callLater") as call_later:
+            app._handle_launch_permission(multitimer.UNAuthorizationStatusDenied)
+        app._finish_launch.assert_not_called()
+        app._show_alert.assert_called_once()
+        app._open_notification_settings.assert_called_once_with()
+        call_later.assert_called_once_with(1.5, app._prepare_launch_permissions)
+
+    def test_authorized_notification_permission_finishes_launch(self):
+        app = multitimer.MultiTimerApp.alloc().init()
+        app._finish_launch = mock.Mock()
+        app._handle_launch_permission(2)
+        app._finish_launch.assert_called_once_with()
+
+    def test_update_dialog_choices_and_future_auto_update(self):
+        app = multitimer.MultiTimerApp.alloc().init()
+        app.settings = dict(multitimer.DEFAULT_SETTINGS)
+        app.settings["update_preference_set"] = False
+        app._skipped_update = ""
+        app._persist = mock.Mock()
+        app._show_update_alert = mock.Mock(return_value=(1001, True))
+        app._start_update_install = mock.Mock()
+        app.status_item = mock.Mock()
+        release = {"tag_name": "v9.0.0", "body": "New features"}
+        app._present_update(release, "dmg", automatic=True)
+        app._show_update_alert.assert_called_once()
+        app._start_update_install.assert_called_once_with(
+            release, "9.0.0", "dmg", relaunch=False
+        )
+        self.assertTrue(app.settings["update_preference_set"])
+        self.assertTrue(app.settings["update_automatically"])
+
+        app._show_update_alert.reset_mock()
+        app._start_update_install.reset_mock()
+        app._present_update(release, "dmg", automatic=True)
+        app._show_update_alert.assert_not_called()
+        app._start_update_install.assert_called_once_with(
+            release, "9.0.0", "dmg", relaunch=True
+        )
+
     def test_setting_switch_persists_immediately(self):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"

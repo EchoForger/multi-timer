@@ -76,7 +76,6 @@ from AppKit import (
     NSApplicationActivationPolicyAccessory,
     NSApplicationActivationPolicyRegular,
     NSStatusBar,
-    NSStatusItemBehaviorTerminationOnRemoval,
     NSSquareStatusItemLength,
     NSVariableStatusItemLength,
     NSMenu,
@@ -1890,11 +1889,6 @@ class MultiTimerApp(NSObject):
         self._status_signature = None
         if self.status_item.respondsToSelector_("setAutosaveName:"):
             self.status_item.setAutosaveName_(_status_item_autosave_name())
-        if self.status_item.respondsToSelector_("setBehavior:"):
-            # This app has no Dock icon or separate window. If the user removes
-            # its only entry point, quitting is safer than leaving an invisible
-            # background process behind.
-            self.status_item.setBehavior_(NSStatusItemBehaviorTerminationOnRemoval)
         btn = self.status_item.button()
         btn.setToolTip_(APP_NAME)
         btn.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(12, NSFontWeightMedium))

@@ -65,6 +65,104 @@ class MultiTimerLogicTests(unittest.TestCase):
         self.assertEqual(release_name, multitimer.STATUS_ITEM_AUTOSAVE_NAME)
         self.assertEqual(development_name, f"{release_name}.development")
 
+    def test_status_item_allows_removal_without_terminating(self):
+        status_item = mock.Mock()
+        status_item.respondsToSelector_.return_value = True
+        status_bar = mock.Mock()
+        status_bar.statusItemWithLength_.return_value = status_item
+        app = mock.Mock()
+        app.settings = {"show_remaining": False, "show_count": False}
+        app._retain = []
+        app._status_images = {}
+        app._refresh_status_item = mock.Mock()
+
+        status_bar_class = mock.Mock()
+        status_bar_class.systemStatusBar.return_value = status_bar
+        with (
+            mock.patch.object(multitimer, "NSStatusBar", status_bar_class),
+            mock.patch.object(multitimer, "NSImage") as image,
+            mock.patch.object(multitimer, "_Action") as action,
+        ):
+            image.imageWithSystemSymbolName_accessibilityDescription_.return_value = None
+            image.imageNamed_.return_value = None
+            action.alloc.return_value.initWithCallback_.return_value = mock.Mock()
+            multitimer.MultiTimerApp._build_status_item(app)
+
+        status_item.setAutosaveName_.assert_called_once_with(
+            multitimer._status_item_autosave_name()
+        )
+        status_item.setBehavior_.assert_called_once_with(
+            multitimer.NSStatusItemBehaviorRemovalAllowed
+        )
+        status_item.setVisible_.assert_not_called()
+
+    def test_status_item_check_respects_control_center_visibility(self):
+        status_item = mock.Mock()
+        status_item.respondsToSelector_.side_effect = lambda selector: selector == "isVisible"
+        status_item.isVisible.return_value = False
+        app = mock.Mock(status_item=status_item)
+
+        with mock.patch.object(multitimer.AppHelper, "callLater") as call_later:
+            multitimer.MultiTimerApp._verify_status_item(app)
+
+        status_item.setVisible_.assert_not_called()
+        call_later.assert_called_once_with(0.8, app._status_item_recheck)
+
+    def test_hidden_status_item_opens_menu_bar_settings(self):
+        status_item = mock.Mock()
+        status_item.respondsToSelector_.side_effect = lambda selector: selector == "isVisible"
+        status_item.isVisible.return_value = False
+        app = mock.Mock(status_item=status_item)
+        app._show_alert.return_value = 1000
+
+        multitimer.MultiTimerApp._status_item_recheck(app)
+
+        app._open_url.assert_called_once_with(
+            "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension?MenuBar"
+        )
+
+    def test_hidden_status_item_can_be_dismissed_without_changing_visibility(self):
+        status_item = mock.Mock()
+        status_item.respondsToSelector_.side_effect = lambda selector: selector == "isVisible"
+        status_item.isVisible.return_value = False
+        app = mock.Mock(status_item=status_item)
+        app._show_alert.return_value = 1001
+
+        multitimer.MultiTimerApp._status_item_recheck(app)
+
+        app._open_url.assert_not_called()
+        status_item.setVisible_.assert_not_called()
+
+    def test_main_uses_accessory_policy_except_in_preview(self):
+        for preview, expected_policy in (
+            (False, multitimer.NSApplicationActivationPolicyAccessory),
+            (True, multitimer.NSApplicationActivationPolicyRegular),
+        ):
+            with self.subTest(preview=preview):
+                app = mock.Mock()
+                delegate = mock.Mock()
+                application_class = mock.Mock()
+                application_class.sharedApplication.return_value = app
+                running_application_class = mock.Mock()
+                running_application_class.runningApplicationsWithBundleIdentifier_.return_value = []
+                app_class = mock.Mock()
+                app_class.alloc.return_value.init.return_value = delegate
+                environment = {"MULTITIMER_PREVIEW": "1"} if preview else {}
+                with (
+                    mock.patch.object(
+                        multitimer, "_relaunch_via_launchservices_if_needed", return_value=False
+                    ),
+                    mock.patch.object(multitimer, "NSApplication", application_class),
+                    mock.patch.object(
+                        multitimer, "NSRunningApplication", running_application_class
+                    ),
+                    mock.patch.object(multitimer, "MultiTimerApp", app_class),
+                    mock.patch.object(multitimer.AppHelper, "runEventLoop"),
+                    mock.patch.dict(multitimer.os.environ, environment, clear=True),
+                ):
+                    multitimer.main()
+                app.setActivationPolicy_.assert_called_once_with(expected_policy)
+
     def test_status_time_uses_stable_hour_minute_format(self):
         self.assertEqual(multitimer.fmt_status_remaining(0), "00:00")
         self.assertEqual(multitimer.fmt_status_remaining(1), "00:01")

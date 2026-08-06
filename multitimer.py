@@ -76,6 +76,7 @@ from AppKit import (
     NSApplicationActivationPolicyAccessory,
     NSApplicationActivationPolicyRegular,
     NSStatusBar,
+    NSStatusItemBehaviorRemovalAllowed,
     NSSquareStatusItemLength,
     NSVariableStatusItemLength,
     NSMenu,
@@ -207,8 +208,8 @@ STRINGS = {
         "back": "返回",
         "time_up_body": "时间到，点击“已检查”移除", "time_up": "时间到",
         "status_hidden": "菜单栏图标没有显示",
-        "status_hidden_detail": "MultiTimer 已尝试恢复图标。若仍未显示，请在系统设置的控制中心中允许 MultiTimer 显示在菜单栏。",
-        "retry": "重新创建图标", "later": "稍后", "notification_request": "允许通知",
+        "status_hidden_detail": "请在“系统设置 → 菜单栏 → 允许在菜单栏”中开启 MultiTimer。应用不会覆盖你的菜单栏可见性选择。",
+        "later": "稍后", "notification_request": "允许通知",
         "source": "安装来源：{source}", "version": "版本 {version}", "development": "开发模式", "unknown": "未知",
         "tagline": "多个倒计时，一个节奏。\n原生 macOS 菜单栏多任务倒计时器。",
         "privacy": "MIT License · 无账户 · 无遥测 · 默认本地，可选 iCloud KVS 同步设置与聚合统计",
@@ -255,8 +256,8 @@ STRINGS = {
         "back": "Back",
         "time_up_body": "Time is up. Click Done to remove it.", "time_up": "Time's up",
         "status_hidden": "Menu bar icon is not visible",
-        "status_hidden_detail": "MultiTimer tried to restore its icon. If it is still missing, allow MultiTimer in System Settings > Control Center.",
-        "retry": "Recreate Icon", "later": "Later", "notification_request": "Allow Notifications",
+        "status_hidden_detail": "Enable MultiTimer in System Settings > Menu Bar > Allow in the Menu Bar. The app will not override your visibility choice.",
+        "later": "Later", "notification_request": "Allow Notifications",
         "source": "Install source: {source}", "version": "Version {version}", "development": "Development", "unknown": "Unknown",
         "tagline": "Multiple timers, one rhythm.\nA native macOS menu bar timer.",
         "privacy": "MIT License · No account · No telemetry · Local by default; optional iCloud KVS sync",
@@ -1889,6 +1890,8 @@ class MultiTimerApp(NSObject):
         self._status_signature = None
         if self.status_item.respondsToSelector_("setAutosaveName:"):
             self.status_item.setAutosaveName_(_status_item_autosave_name())
+        if self.status_item.respondsToSelector_("setBehavior:"):
+            self.status_item.setBehavior_(NSStatusItemBehaviorRemovalAllowed)
         btn = self.status_item.button()
         btn.setToolTip_(APP_NAME)
         btn.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(12, NSFontWeightMedium))
@@ -1906,8 +1909,6 @@ class MultiTimerApp(NSObject):
         self._retain.append(toggle)
         btn.setTarget_(toggle)
         btn.setAction_("invoke:")
-        if self.status_item.respondsToSelector_("setVisible:"):
-            self.status_item.setVisible_(True)
         self._refresh_status_item()
 
     def _pomodoro_status_image(self, phase):
@@ -1987,17 +1988,11 @@ class MultiTimerApp(NSObject):
         item = getattr(self, "status_item", None)
         if item is None:
             return
-        # Control Center may finish applying its saved placement after AppKit
-        # creates the item. Reassert visibility once after that restoration.
-        if item.respondsToSelector_("setVisible:"):
-            item.setVisible_(True)
         visible = True
         if item.respondsToSelector_("isVisible"):
             visible = bool(item.isVisible())
         if visible:
             return
-        if item.respondsToSelector_("setVisible:"):
-            item.setVisible_(True)
         AppHelper.callLater(0.8, self._status_item_recheck)
 
     def _status_item_recheck(self):
@@ -2006,13 +2001,12 @@ class MultiTimerApp(NSObject):
             return
         response = self._show_alert(
             self.tr("status_hidden"), self.tr("status_hidden_detail"),
-            (self.tr("retry"), self.tr("open_settings"), self.tr("later")),
+            (self.tr("open_settings"), self.tr("later")),
         )
         if response == 1000:
-            NSStatusBar.systemStatusBar().removeStatusItem_(self.status_item)
-            self._build_status_item()
-        elif response == 1001:
-            self._open_url("x-apple.systempreferences:com.apple.ControlCenter-Settings.extension")
+            self._open_url(
+                "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension?MenuBar"
+            )
 
     def _setup_url_scheme(self):
         manager = NSAppleEventManager.sharedAppleEventManager()
@@ -3958,7 +3952,11 @@ def main():
             # instance also prevents duplicate status-item hosts in Control
             # Center, which can otherwise make macOS hide both of them.
             return
-    policy = NSApplicationActivationPolicyRegular if preview else NSApplicationActivationPolicyAccessory
+    policy = (
+        NSApplicationActivationPolicyRegular
+        if preview
+        else NSApplicationActivationPolicyAccessory
+    )
     app.setActivationPolicy_(policy)  # 正常运行时不显示 Dock 图标
     appearance = os.environ.get("MULTITIMER_APPEARANCE", "").lower()
     if appearance in {"light", "dark"}:

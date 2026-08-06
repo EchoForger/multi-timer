@@ -137,7 +137,7 @@ from AppKit import (
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.6.1"
 # Keep one stable identity across installs, login items, notifications,
 # URL handling, and Control Center status-item restoration.
 APP_BUNDLE_ID = "io.github.echoforger.multitimer"

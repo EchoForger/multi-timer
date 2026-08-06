@@ -48,7 +48,7 @@ git log -1 --oneline
 设置本次版本变量，后续命令统一引用：
 
 ```bash
-release_version="0.6.0"
+release_version="0.6.1"
 ```
 
 必须同步修改：
@@ -268,7 +268,7 @@ dist/MultiTimer.app/Contents/MacOS/MultiTimer list
 ## 9. 生成与验证 DMG
 
 ```bash
-release_version="0.6.0"
+release_version="0.6.1"
 release_stage=$(mktemp -d /private/tmp/multitimer-dmg.XXXXXX)
 
 ditto dist/MultiTimer.app "$release_stage/MultiTimer.app"

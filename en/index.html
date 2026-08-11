@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f5f5f7">
-    <meta name="description" content="MultiTimer is a lightweight, native macOS menu bar app for running multiple timers at once.">
+    <meta name="description" content="MultiTimer is a lightweight native macOS menu bar timer with an optional focus statistics window.">
     <meta property="og:type" content="website">
     <meta property="og:title" content="MultiTimer — Many timers, one rhythm">
     <meta property="og:description" content="Keep work, breaks, meetings, and everyday tasks on time. Native, local, and open source.">
@@ -18,7 +18,7 @@
     <link rel="alternate" hreflang="en" href="https://echoforger.github.io/multi-timer/en/">
     <link rel="alternate" hreflang="x-default" href="https://echoforger.github.io/multi-timer/">
     <link rel="icon" href="../assets/app-icon.png">
-    <title>MultiTimer — Multiple timers in your macOS menu bar</title>
+    <title>MultiTimer — Native multiple timers for macOS</title>
     <script>
       (() => {
         const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -63,7 +63,7 @@
         <div class="hero-copy reveal">
           <p class="eyebrow"><span></span> Native macOS menu bar utility</p>
           <h1>Lots of timers.<br><em>One menu bar.</em></h1>
-          <p class="hero-lede">Keep meetings, focus sessions, the oven, and your next break in sight—without switching windows or losing your flow.</p>
+          <p class="hero-lede">Manage every timer from the menu bar, then open the native focus statistics window only when you want a wider view.</p>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/EchoForger/multi-timer/releases/latest" target="_blank" rel="noreferrer">
               <span class="apple-mark" aria-hidden="true"></span> Download for macOS
@@ -71,7 +71,7 @@
             <a class="button button-secondary" href="#brew">Install with Homebrew <span aria-hidden="true">↓</span></a>
           </div>
           <div class="hero-meta" aria-label="Project highlights">
-            <span><i></i> macOS Big Sur+</span>
+            <span><i></i> macOS Ventura+</span>
             <span><i></i> No accounts or telemetry</span>
             <span><i></i> MIT licensed</span>
           </div>
@@ -90,7 +90,7 @@
               data-dark-src="../dark.png"
               alt="MultiTimer running a Pomodoro, countdown, and stopwatch"
               width="316"
-              height="434"
+              height="562"
             >
           </div>
           <img class="floating-app-icon" src="../assets/app-icon.png" alt="" width="92" height="92" aria-hidden="true">
@@ -123,9 +123,9 @@
             <span class="feature-index">01 / MULTI</span>
             <h3>Timers and Pomodoro, each with its own rhythm.</h3>
             <p>
-              Countdowns and stopwatches run side by side. A dedicated Pomodoro switches
-              between work and breaks, while the menu bar shows MM:SS with distinct stage
-              colors. Daily totals, 30-day trends, and CSV export stay local.
+              Countdowns, stopwatches, and Pomodoro live in the full menu bar panel. An
+              optional native statistics window shows 30-day trends and CSV export, then
+              returns the app to menu-bar-only mode when closed.
             </p>
             <div class="mini-timers" aria-hidden="true">
               <div><span><i></i>Code review</span><b>24:18</b><em style="--p:72%"></em></div>
@@ -163,11 +163,11 @@
           <div class="dual-shots reveal" aria-label="MultiTimer light and dark interfaces">
             <figure class="shot-card shot-light">
               <figcaption><span></span> Light</figcaption>
-              <img src="../light.png" alt="MultiTimer compact interface in light appearance" width="316" height="434">
+              <img src="../light.png" alt="MultiTimer compact interface in light appearance" width="316" height="562">
             </figure>
             <figure class="shot-card shot-dark">
               <figcaption><span></span> Dark</figcaption>
-              <img src="../dark.png" alt="MultiTimer compact interface in dark appearance" width="316" height="434">
+              <img src="../dark.png" alt="MultiTimer compact interface in dark appearance" width="316" height="562">
             </figure>
           </div>
         </div>
@@ -191,7 +191,7 @@
             <a class="button button-dark" href="https://github.com/EchoForger/multi-timer/releases/latest" target="_blank" rel="noreferrer">
               Download latest <span aria-hidden="true">↓</span>
             </a>
-            <small>macOS Big Sur or later</small>
+            <small>macOS Ventura or later</small>
           </article>
 
           <article class="install-option brew-option reveal" id="brew">
@@ -213,7 +213,7 @@
           </article>
         </div>
 
-        <p class="first-open reveal">If macOS blocks the first launch, Control-click MultiTimer and choose Open. After launch, the app checks GitHub Releases for updates and asks before installing; you can also check manually from the ⓘ button in the panel.</p>
+        <p class="first-open reveal">If macOS blocks the first launch, Control-click MultiTimer and choose Open. After launch, the app checks GitHub Releases for updates and asks before installing; you can also use Check for Updates at the bottom of the panel.</p>
       </section>
     </main>
 

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f5f5f7">
-    <meta name="description" content="MultiTimer 是一款轻巧、原生的 macOS 菜单栏多任务倒计时器。">
+    <meta name="description" content="MultiTimer 是一款轻巧、原生的 macOS 菜单栏多任务倒计时器，另有按需打开的专注统计窗口。">
     <meta property="og:type" content="website">
     <meta property="og:title" content="MultiTimer — 多个倒计时，一个节奏">
     <meta property="og:description" content="同时管理工作、休息和生活节奏。原生、本地、开源。">
@@ -18,7 +18,7 @@
     <link rel="alternate" hreflang="en" href="https://echoforger.github.io/multi-timer/en/">
     <link rel="alternate" hreflang="x-default" href="https://echoforger.github.io/multi-timer/">
     <link rel="icon" href="assets/app-icon.png">
-    <title>MultiTimer — macOS 菜单栏多任务倒计时</title>
+    <title>MultiTimer — 原生 macOS 多任务倒计时</title>
     <script>
       (() => {
         try {
@@ -71,7 +71,7 @@
         <div class="hero-copy reveal">
           <p class="eyebrow"><span></span> 原生 macOS 菜单栏工具</p>
           <h1>倒计时很多，<br><em>菜单栏一个就够。</em></h1>
-          <p class="hero-lede">同时看住会议、番茄钟、烤箱和休息。无需切换窗口，不打断当前任务。</p>
+          <p class="hero-lede">完整计时功能都在菜单栏；需要复盘时，再打开原生专注统计窗口。</p>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/EchoForger/multi-timer/releases/latest" target="_blank" rel="noreferrer">
               <span class="apple-mark" aria-hidden="true"></span> 下载 macOS 版
@@ -79,7 +79,7 @@
             <a class="button button-secondary" href="#brew">Homebrew 安装 <span aria-hidden="true">↓</span></a>
           </div>
           <div class="hero-meta" aria-label="项目特点">
-            <span><i></i> macOS Big Sur+</span>
+            <span><i></i> macOS Ventura+</span>
             <span><i></i> 无账户与遥测</span>
             <span><i></i> MIT 开源</span>
           </div>
@@ -98,7 +98,7 @@
               data-dark-src="dark.png"
               alt="MultiTimer 同时运行番茄钟、倒计时和秒表的界面"
               width="316"
-              height="434"
+              height="562"
             >
           </div>
           <img class="floating-app-icon" src="assets/app-icon.png" alt="" width="92" height="92" aria-hidden="true">
@@ -130,7 +130,7 @@
           <article class="feature feature-main reveal">
             <span class="feature-index">01 / MULTI</span>
             <h3>计时器与番茄钟，各有自己的节奏。</h3>
-            <p>倒计时与秒表可以同时运行；独立番茄钟负责工作与休息切换，菜单栏用不同状态色显示 MM:SS。今日完成数、30 天趋势和 CSV 导出都留在本机。</p>
+            <p>倒计时、秒表与番茄钟都在菜单栏中完整管理；原生统计窗口按需展示 30 天趋势和 CSV 导出，关闭后重新回到纯菜单栏状态。</p>
             <div class="mini-timers" aria-hidden="true">
               <div><span><i></i>代码审查</span><b>24:18</b><em style="--p:72%"></em></div>
               <div><span><i></i>休息一下</span><b>04:32</b><em style="--p:42%"></em></div>
@@ -167,11 +167,11 @@
           <div class="dual-shots reveal" aria-label="MultiTimer 浅色和深色界面">
             <figure class="shot-card shot-light">
               <figcaption><span></span> Light</figcaption>
-              <img src="light.png" alt="MultiTimer 浅色紧凑界面" width="316" height="434">
+              <img src="light.png" alt="MultiTimer 浅色紧凑界面" width="316" height="562">
             </figure>
             <figure class="shot-card shot-dark">
               <figcaption><span></span> Dark</figcaption>
-              <img src="dark.png" alt="MultiTimer 深色紧凑界面" width="316" height="434">
+              <img src="dark.png" alt="MultiTimer 深色紧凑界面" width="316" height="562">
             </figure>
           </div>
         </div>
@@ -195,7 +195,7 @@
             <a class="button button-dark" href="https://github.com/EchoForger/multi-timer/releases/latest" target="_blank" rel="noreferrer">
               下载最新版 <span aria-hidden="true">↓</span>
             </a>
-            <small>macOS Big Sur 或更高版本</small>
+            <small>macOS Ventura 或更高版本</small>
           </article>
 
           <article class="install-option brew-option reveal" id="brew">
@@ -217,7 +217,7 @@
           </article>
         </div>
 
-        <p class="first-open reveal">首次打开若被 macOS 拦截，请右键 MultiTimer 并选择“打开”。应用启动后会通过 GitHub Release 检查更新，发现新版时由你确认是否安装；也可通过面板右上角的 ⓘ 手动检查。</p>
+        <p class="first-open reveal">首次打开若被 macOS 拦截，请右键 MultiTimer 并选择“打开”。应用启动后会通过 GitHub Release 检查更新，发现新版时由你确认是否安装；也可通过面板底部的“检查更新”手动检查。</p>
       </section>
     </main>
 

@@ -41,9 +41,15 @@
 }
 
 html {
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   scroll-padding-top: var(--header-height);
   overflow-x: hidden;
+}
+
+#why,
+#interface,
+#install {
+  scroll-margin-top: 20px;
 }
 
 body {
@@ -351,7 +357,7 @@ button {
 
 .hero-art {
   position: relative;
-  min-height: 560px;
+  min-height: 680px;
   display: grid;
   place-items: center;
   isolation: isolate;
@@ -362,7 +368,7 @@ button {
   position: absolute;
   z-index: -3;
   width: 480px;
-  height: 480px;
+  height: 600px;
   border-radius: 48px;
   background: #1d1d1f;
   transform: rotate(6deg);
@@ -768,7 +774,7 @@ button {
 .palette i:nth-child(4) { background: #30d158; }
 
 .dual-shots {
-  min-height: 570px;
+  min-height: 700px;
   display: flex;
   align-items: center;
   justify-content: center;

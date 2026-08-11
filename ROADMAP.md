@@ -213,9 +213,9 @@
 - [ ] **自动构建 Release**：Tag 后自动构建、签名、公证、生成 DMG 和 SHA-256。
 - [ ] **Homebrew 自动同步**：Release 成功后自动更新 cask，并验证真实下载哈希。
 - [ ] **发布前冒烟测试**：菜单栏显示、启动计时、通知、重启恢复、检查更新。
-- [ ] **版本一致性检查**：自动验证源码、PyInstaller spec、DMG、Release 与 cask 版本一致。
-- [ ] **可复现构建记录**：记录 Python、PyInstaller、SDK 和依赖版本。
-- [ ] **依赖安全扫描**：定期检查 PyObjC、PyInstaller 与打包依赖漏洞。
+- [ ] **版本一致性检查**：自动验证 Swift 源码、Info.plist、DMG、Release 与 cask 版本一致。
+- [ ] **可复现构建记录**：记录 Swift、Xcode、macOS SDK 和依赖版本。
+- [ ] **依赖安全扫描**：定期检查 SwiftPM 依赖与构建工具链漏洞。
 - [ ] **Beta 发布流程**：Prerelease 不影响 Stable 用户，Beta 用户可主动加入。
 - [ ] **崩溃诊断选择**：默认不上传；允许用户手动导出崩溃报告。
 

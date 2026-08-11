@@ -1,513 +1,272 @@
-# MultiTimer 版本迭代与发布工作流
+# MultiTimer 原生 Swift 版本迭代与发布工作流
 
-> 给后续维护者和 Codex 使用的可执行发布手册。默认从仓库根目录运行命令。
->
-> 发布是外部写操作：只有用户明确要求“提交、推送或发布新版本”时，才执行 GitHub Release、Homebrew 推送等步骤。
+> 给维护者和后续 Codex 使用。默认在仓库根目录执行。只有用户明确要求提交、推送或发布时，才执行 GitHub Release 与 Homebrew 外部写操作。
 
-## 0. 发布原则
+## 1. 发布原则
 
-- [ ] MultiTimer 始终是纯菜单栏应用，`LSUIElement` 必须为 `true`，不得在 Dock 中显示常驻图标。
-- [ ] 不覆盖用户已有计时器、设置或预设；状态文件迁移必须向后兼容。
-- [ ] 官网只展示 DMG 和 Homebrew 两种安装方式，不写源码安装。
-- [ ] README 先写 DMG 和 Homebrew 安装，再写使用说明、自动化与开发者内容。
-- [ ] 软件、README、官网、图标和截图保持同一套设计语言。
-- [ ] 浅色、深色和按钮颜色跟随 macOS；不要写死强调色。
-- [ ] Release、源码、应用包、DMG、校验文件和 Homebrew cask 必须使用同一个版本号。
-- [ ] 不自动升级本机旧版本，除非用户明确要求；保留旧版本便于测试检查更新流程。
-- [ ] 不提交 `build/`、`dist/`、缓存或临时测试状态。
+- [ ] 完整计时界面始终位于 `NSStatusItem + NSPopover`；不要改成普通常驻窗口。
+- [ ] `LSUIElement=true`，正常运行时不显示 Dock 图标。
+- [ ] 统计、设置和权限窗口按需打开；所有窗口关闭后恢复 `.accessory`，菜单栏项目继续存在。
+- [ ] 状态路径保持 `~/.config/multitimer/state.json` 与 `pomodoro-stats.json`，旧 JSON schema 必须可迁移。
+- [ ] 官网只展示 DMG 与 Homebrew；README 可在后半部分提供源码构建。
+- [ ] 软件、图标、README、官网和截图使用同一套原生 macOS 设计语言。
+- [ ] 控件、强调色、深浅模式和文字大小跟随系统。
+- [ ] Release、App、DMG、校验文件与 Homebrew cask 版本完全一致。
+- [ ] 除非用户明确要求，不升级本机安装版，便于测试旧版检查更新。
+- [ ] 不提交 `.build/`、`build/`、`dist/` 或预览状态文件。
 
-## 1. 确认本次需求范围
-
-- [ ] 查看 `ROADMAP.md` 中用户勾选的所有 `- [x]` 项。
-- [ ] 将勾选项分成系统集成、计时器、菜单栏、自动化、文档与发布几组。
-- [ ] 确认每个勾选项都有明确的实现位置和验证方法。
-- [ ] 检查工作区，保留用户已有修改，不覆盖无关文件。
+## 2. 确认需求和版本
 
 ```bash
-rg -n '^\s*- \[x\]' ROADMAP.md
+rg -n '^\s*- \[x\]' ROADMAP.md FEATURE_TODO.md
 git status --short
-git log -1 --oneline
+git diff --stat
 ```
 
-如果需求跨度较大，先在工作计划中分阶段：
+版本必须同步修改：
 
-1. 状态与系统集成。
-2. 核心计时能力和 UI。
-3. URL Scheme、CLI 与本地通信。
-4. 测试、文档和构建。
-5. GitHub Release 与 Homebrew。
-
-## 2. 选择版本号
-
-遵循语义化版本：
-
-- 修复且不改变功能：补丁版本，例如 `0.4.0 → 0.4.1`。
-- 新增向后兼容功能：次版本，例如 `0.4.1 → 0.5.0`。
-- 不兼容的数据或接口变化：主版本。
-
-设置本次版本变量，后续命令统一引用：
+- [ ] `Support/Info.plist` 的 `CFBundleShortVersionString` 与 `CFBundleVersion`。
+- [ ] `MultiTimer/MultiTimerApp.swift` 中关于面板和更新检查的当前版本。
+- [ ] `scripts/package.sh` 的 `MULTITIMER_VERSION`。
+- [ ] Release Notes 与 Homebrew cask。
 
 ```bash
-release_version="0.6.2"
+rg -n '0\.7\.0|CFBundleShortVersionString|CFBundleVersion|MULTITIMER_VERSION' \
+  Support MultiTimer Scripts
 ```
 
-必须同步修改：
+## 3. 技术结构
 
-- [ ] `multitimer.py` 中的 `APP_VERSION`。
-- [ ] `MultiTimer.spec` 中的 `CFBundleShortVersionString`。
-- [ ] `MultiTimer.spec` 中的 `CFBundleVersion`。
-- [ ] `pyproject.toml` 中的项目版本。
+- `MultiTimerCore/`：可测试的数据模型、旧状态迁移、格式化、解析、原子 JSON 与控制协议。
+- `MultiTimer/`：SwiftUI 界面与 AppKit 生命周期、菜单栏、Popover、通知、权限、更新、iCloud KVS。
+- `MultiTimerCLI/`：`multitimer` 命令，通过本地 Unix Socket 控制运行实例。
+- `Tests/MultiTimerCoreTests/`：Swift XCTest。
+- `Support/`：App `Info.plist` 与 entitlements。
+- `scripts/build.sh`：按 TomatoBar 的方式用 SwiftPM 和 macOS SDK 组装 `.app`。
+- `scripts/package.sh`：生成 DMG 与 SHA-256。
 
-检查是否残留旧版本：
+SwiftPM 内部 GUI 产物叫 `MultiTimer`，CLI 产物必须叫 `MultiTimerCLI`。不要把两个 product 命名成只存在大小写差异的 `MultiTimer` / `multitimer`；默认 macOS 文件系统会让它们互相覆盖，导致 App 启动成 CLI 后立即退出。打包时再把 `MultiTimerCLI` 安装为 `Contents/Resources/bin/multitimer`。
+
+## 4. 功能兼容检查
+
+### 普通计时器
+
+- [ ] 多个倒计时和秒表可并行运行。
+- [ ] 分钟、`MM:SS`、`HH:MM:SS` 与目标时刻解析正确，最大 24 小时。
+- [ ] 暂停/继续、取消、完成、重新计时、复制、置顶与调整剩余时间正常。
+- [ ] 秒表计圈正常。
+- [ ] 双击和 Force Touch 都可行内改名。
+- [ ] 菜单栏最近剩余时间使用等宽 `HH:MM`，不显示秒。
+
+### 番茄钟与统计
+
+- [ ] 工作/休息、暂停、跳过、停止、延长 5 分钟与自动循环正常。
+- [ ] 只统计自然完成的工作阶段。
+- [ ] 今日数量、30 天趋势、CSV 导出与清空确认正常。
+- [ ] 工作和休息通知使用不同声音。
+
+### 系统集成
+
+- [ ] 登录时启动使用 `LaunchAtLogin`。
+- [ ] `⌘⇧⌥M` 和 `multitimer permissions` 都能打开权限窗口。
+- [ ] `multitimer://start?name=Tea&minutes=5` 与番茄 URL 正常。
+- [ ] CLI 的 `start/list/pause/cancel/permissions/pomodoro` 正常。
+- [ ] 设置即时保存，无保存/取消按钮；语言按钮打开 macOS 语言设置。
+- [ ] iCloud entitlement 存在时同步设置与聚合统计；ad-hoc 构建安全回退本地。
+
+### 更新
+
+- [ ] 始终通过 GitHub Releases 判断最新版，不依赖容易触发 403 的未认证 REST API。
+- [ ] 更新提示显示 Release Notes 和“立即更新 / 稍后提醒 / 跳过此版本”。
+- [ ] Homebrew 来源后台运行 `brew upgrade --cask echoforger/tap/multi-timer`。
+- [ ] DMG 来源下载 DMG 与 `.sha256`，校验 Bundle ID 和 SHA-256 后替换 App；失败时恢复备份。
+
+## 5. 源码验证
 
 ```bash
-rg -n 'APP_VERSION|CFBundleShortVersionString|CFBundleVersion|^version =' \
-  multitimer.py MultiTimer.spec pyproject.toml
-```
-
-## 3. 实现与兼容性要求
-
-### 状态文件
-
-- [ ] 配置位置保持为 `~/.config/multitimer/state.json`。
-- [ ] 新字段提供默认值，旧状态文件能够直接读取。
-- [ ] 持久化数据中不要混入 AppKit 控件或运行时对象。
-- [ ] 新计时器类型、暂停、置顶、圈次等状态重启后仍能恢复。
-
-### 菜单栏与 UI
-
-- [ ] `MultiTimer.spec` 保留 `'LSUIElement': True`。
-- [ ] 正常启动由应用包中的 `LSUIElement=true` 管理纯菜单栏生命周期；不要在运行时覆盖 activation policy。
-- [ ] 设置入口仍从 Popover 打开，不创建独立常驻窗口。
-- [ ] 状态栏项目沿用 AppKit 默认 `Item-0` 身份，不设置 `autosaveName` 或移除行为，与 TomatoBar 的原生实现保持一致。
-- [ ] 控件优先使用 AppKit 原生控件和 SF Symbols。
-- [ ] 卡片宽度一致，按钮不被压缩或截断。
-- [ ] 分别检查没有计时器、多个倒计时、秒表、暂停、完成和长名称。
-- [ ] 菜单栏标题、图标位置和宽度只在内容变化时更新，不得在每次 ticker 中无条件重设。
-- [ ] 菜单栏剩余时间使用等宽 `HH:MM`，不显示秒，避免数字变化时左右抖动。
-- [ ] 偏好设置位于 Popover 内，开关即时保存，不出现统一的“保存/取消”按钮。
-- [ ] 应用语言由 macOS“语言与地区”管理，偏好设置仅提供系统页面入口。
-- [ ] 不同时运行安装版与同 Bundle ID 的 `dist/MultiTimer.app`。
-
-### 自动更新
-
-- [ ] 永远通过 GitHub Release 判断最新版本。
-- [ ] 避免依赖 GitHub 未认证 REST API，以免遇到 `403 rate limit exceeded`。
-- [ ] 当前实现通过 `/releases/latest` 重定向识别版本，并从 `releases.atom` 读取更新日志。
-- [ ] Homebrew 安装来源执行指定 cask 更新命令。
-- [ ] DMG 安装来源下载 DMG、读取 `.sha256`、校验并替换应用。
-- [ ] 更新前必须由用户选择“立即更新 / 晚点提醒 / 跳过版本”。
-- [ ] Homebrew 更新确认中显示将执行的完整命令。
-
-### CLI 与 URL Scheme
-
-- [ ] `MultiTimer.spec` 中保留 `multitimer` URL Scheme。
-- [ ] URL 示例可实际创建计时器：
-
-```text
-multitimer://start?name=Tea&minutes=5
-```
-
-- [ ] CLI 至少验证 `start`、`list`、`pause`、`cancel`。
-- [ ] CLI 与菜单栏实例只通过本机 Unix Socket 通信，不开放网络端口。
-- [ ] Homebrew cask 保留 Binary stanza：
-
-```ruby
-binary "#{appdir}/MultiTimer.app/Contents/MacOS/MultiTimer", target: "multitimer"
-```
-
-## 4. 源码验证
-
-每次发布至少执行：
-
-```bash
-python -m py_compile multitimer.py
-python -m unittest discover -s tests -v
+swift test
 git diff --check
+plutil -lint Support/Info.plist Support/MultiTimer.entitlements
 ```
 
-检查版本和 URL 解析：
+受限或离线环境可复用已有依赖缓存：
 
 ```bash
-python - <<'PY'
-import multitimer
-
-print(multitimer.APP_VERSION)
-print(multitimer._parse_multitimer_url(
-    "multitimer://start?name=Tea&minutes=5"
-))
-PY
+MULTITIMER_DISABLE_SWIFTPM_SANDBOX=1 \
+MULTITIMER_OFFLINE=1 \
+./scripts/build.sh debug
 ```
 
-- [ ] 所有逻辑测试通过。
-- [ ] 没有语法错误。
-- [ ] `git diff --check` 没有空白错误。
-- [ ] 旧配置迁移测试通过。
+- [ ] 所有 XCTest 通过。
+- [ ] 无编译错误和非预期警告。
+- [ ] 旧 schema 迁移、时长解析、版本比较和原子写入测试通过。
+- [ ] `git diff --check` 通过。
 
-## 5. 视觉预览和截图
+## 6. 视觉快照
 
-使用独立临时状态文件，避免改动用户真实配置：
+使用独立临时状态，不触碰真实配置：
 
 ```bash
-MULTITIMER_PREVIEW=1 \
-MULTITIMER_DISABLE_NOTIFICATIONS=1 \
-MULTITIMER_STATE_PATH=/private/tmp/multitimer-release-preview.json \
-MULTITIMER_APPEARANCE=light \
-MULTITIMER_SNAPSHOT_PATH="$PWD/light.png" \
-python multitimer.py
+open -n -g \
+  --env MULTITIMER_PREVIEW=1 \
+  --env MULTITIMER_APPEARANCE=light \
+  --env MULTITIMER_SNAPSHOT_PATH=/private/tmp/multitimer-light.png \
+  --env MULTITIMER_STATE_PATH=/private/tmp/multitimer-light-state.json \
+  --env MULTITIMER_STATS_PATH=/private/tmp/multitimer-light-stats.json \
+  --env MULTITIMER_SOCKET_PATH=/private/tmp/multitimer-light.sock \
+  build/MultiTimer.app
 ```
 
-深色截图把 `MULTITIMER_APPEARANCE` 改为 `dark`，输出为 `dark.png`。
+深色把 `light` 改为 `dark` 并改输出路径。确认后同步为 `light.png`、`dark.png`。
 
-- [ ] `light.png` 与 `dark.png` 内容一致，仅外观不同。
-- [ ] 截图包含有代表性的倒计时和秒表。
-- [ ] 截图尺寸比例正确，README 和官网不得拉伸图片。
-- [ ] 官网 `<img>` 的 `width`、`height` 与图片比例一致。
-- [ ] README 使用 `<picture>` 根据浏览器深浅模式切换截图。
-- [ ] 检查紧凑布局、长名称、计圈文字、置顶和所有按钮。
+- [ ] 两张图都是 720 × 1280（2×，逻辑尺寸 360 × 640）。
+- [ ] 不拉伸；README 只指定宽度，官网 `316 × 562`。
+- [ ] 快捷按钮完整显示，卡片宽度一致，长名称不挤压时间。
+- [ ] 深浅色仅外观不同，所有内容一致。
 
-预览进程验证完成后要退出，不要留下测试实例。
+## 7. App 包构建与冒烟测试
 
-## 6. 同步 README 与官网
+```bash
+./scripts/build.sh release
+codesign --verify --deep --strict build/MultiTimer.app
+plutil -p build/MultiTimer.app/Contents/Info.plist
+file build/MultiTimer.app/Contents/MacOS/MultiTimer
+file build/MultiTimer.app/Contents/Resources/bin/multitimer
+```
 
-### README
+必须确认：
 
-- [ ] 图标、简介、最新 Release 下载按钮正常。
-- [ ] 首先写 DMG 安装。
-- [ ] 然后写 Homebrew 安装与更新。
-- [ ] 更新本版本的功能和使用方法。
-- [ ] 自动化部分同步 URL Scheme 与 CLI。
-- [ ] 开发者部分保留源码运行、测试和打包说明。
-- [ ] 本地状态文件路径准确。
+- [ ] Bundle ID 是 `io.github.echoforger.multitimer`。
+- [ ] `LSUIElement=true`，版本号正确，URL Scheme 是 `multitimer`。
+- [ ] GUI 与 CLI 是两个不同 Mach-O；GUI 不会输出 CLI Usage 后退出。
+- [ ] LaunchAtLogin helper 已嵌入并签名。
+- [ ] App 签名结构通过验证。
 
-### 官网
+用隔离状态启动：
 
-- [ ] 只提供“下载 DMG”和“Homebrew 安装”。
-- [ ] 不出现源码安装入口。
+```bash
+open -n -g \
+  --env MULTITIMER_STATE_PATH=/private/tmp/multitimer-smoke-state.json \
+  --env MULTITIMER_STATS_PATH=/private/tmp/multitimer-smoke-stats.json \
+  --env MULTITIMER_SOCKET_PATH=/private/tmp/multitimer-smoke.sock \
+  build/MultiTimer.app
+
+MULTITIMER_SOCKET_PATH=/private/tmp/multitimer-smoke.sock \
+  build/MultiTimer.app/Contents/Resources/bin/multitimer start Tea 5
+
+MULTITIMER_SOCKET_PATH=/private/tmp/multitimer-smoke.sock \
+  build/MultiTimer.app/Contents/Resources/bin/multitimer list
+```
+
+- [ ] 进程持续驻留且菜单栏图标可见。
+- [ ] Popover 可开关，普通计时器、番茄钟和秒表可操作。
+- [ ] 默认无 Dock 图标；统计窗口打开时显示 Dock，关闭后消失。
+- [ ] CLI 和 URL Scheme 创建的任务出现在同一实例。
+- [ ] 测试结束只终止工作区测试实例，不误杀安装版。
+
+## 8. README 与官网
+
+README：
+
+- [ ] 首先写 DMG 和 Homebrew 安装。
+- [ ] 截图用 `<picture>` 随浏览器深浅切换。
+- [ ] 后半部分写 Swift 源码运行、测试与打包。
+- [ ] 数据路径、CLI、URL Scheme、最低 macOS 版本准确。
+
+官网：
+
+- [ ] 只提供 DMG 和 Homebrew，不提供源码安装入口。
+- [ ] 中文 `/multi-timer/` 与英文 `/multi-timer/en/` 内容同步。
+- [ ] 首访跟随浏览器语言，手动选择后记住。
 - [ ] 下载按钮指向 `releases/latest`。
-- [ ] Homebrew 命令保持：
+- [ ] Homebrew 命令是：
 
 ```bash
 brew tap EchoForger/tap
 brew install --cask multi-timer
 ```
 
-- [ ] 软件特性、图标和截图同步更新。
-- [ ] 中文主页位于 `/multi-timer/`，英文主页位于 `/multi-timer/en/`，两种语言的功能和安装说明保持同步。
-- [ ] 首次访问根据浏览器语言选择页面，手动切换后记住用户选择。
-- [ ] 两个页面都保留正确的 `canonical`、`hreflang`、标题、简介和社交分享信息。
-- [ ] 锚点导航后没有多余顶部空白。
-- [ ] 网站跟随浏览器深浅模式。
+- [ ] 锚点滚动不在固定导航下方留下多余空白。
+- [ ] 深浅模式、图标和截图均为当前版本。
 
-## 7. 构建应用包
+## 9. 生成 DMG
 
 ```bash
-pyinstaller MultiTimer.spec --noconfirm --clean
+./scripts/package.sh
+hdiutil verify dist/MultiTimer-0.7.0.dmg
+(cd dist && shasum -a 256 -c MultiTimer-0.7.0.dmg.sha256)
 ```
 
-检查产物：
+- [ ] DMG 中包含 `MultiTimer.app` 与 `/Applications` 快捷方式。
+- [ ] App 内版本、Bundle ID 与签名结构正确。
+- [ ] SHA-256 校验通过并记录给 Homebrew。
 
-```bash
-codesign --verify --deep --strict dist/MultiTimer.app
-plutil -p dist/MultiTimer.app/Contents/Info.plist
-file dist/MultiTimer.app/Contents/MacOS/MultiTimer
-```
-
-- [ ] 版本号正确。
-- [ ] `LSUIElement` 为 `true`。
-- [ ] Bundle ID 为 `io.github.echoforger.multitimer`。
-- [ ] `CFBundleURLTypes` 包含 `multitimer`。
-- [ ] 当前构建架构与 Release 说明一致。
-- [ ] `codesign --verify` 通过。
-
-当前构建使用 ad-hoc 签名，尚未完成 Apple Developer ID 签名与公证。发布说明和安装文档必须继续保留首次打开提示，直到正式完成 Notarization。
-
-## 8. 应用包冒烟测试
-
-用 LaunchServices 启动打包后的独立测试实例：
-
-```bash
-open -n -g \
-  --env MULTITIMER_PREVIEW=1 \
-  --env MULTITIMER_DISABLE_NOTIFICATIONS=1 \
-  --env MULTITIMER_STATE_PATH=/private/tmp/multitimer-bundle-test.json \
-  dist/MultiTimer.app
-```
-
-不要直接执行 `dist/MultiTimer.app/Contents/MacOS/MultiTimer` 来启动 GUI。macOS 26 可能继承终端或自动化宿主的 XPC 身份，把 MultiTimer 的菜单栏项目错误登记到宿主应用名下并永久隐藏。应用自身也必须检测这种启动方式，并在创建状态栏项前通过 LaunchServices 重新启动。
-
-验证 CLI：
-
-```bash
-MULTITIMER_STATE_PATH=/private/tmp/multitimer-bundle-test.json \
-dist/MultiTimer.app/Contents/MacOS/MultiTimer start Tea 5
-
-MULTITIMER_STATE_PATH=/private/tmp/multitimer-bundle-test.json \
-dist/MultiTimer.app/Contents/MacOS/MultiTimer list
-```
-
-验证实际 URL Scheme 时，系统中不能有同 Bundle ID 的旧版实例阻止测试包启动：
-
-1. 先确认并正常退出当前 MultiTimer。
-2. 通过 `open` 启动 `dist/MultiTimer.app`。
-3. 打开 `multitimer://start?name=URLTest&minutes=3`。
-4. 用 CLI `list` 确认 `URLTest` 已创建。
-5. 退出测试包。
-6. 如测试前旧版正在运行，重新打开旧版。
-
-- [ ] 菜单栏图标出现。
-- [ ] Dock 没有 MultiTimer 图标。
-- [ ] Unified Log 中没有每 0.5 秒重复发送的 Control Center `SceneFenceAction`。
-- [ ] Popover 可以打开和关闭。
-- [ ] 创建、暂停、复制、置顶、减时和取消正常。
-- [ ] 秒表和计圈正常。
-- [ ] URL Scheme 正常。
-- [ ] CLI 四个命令正常。
-- [ ] 退出后没有测试进程残留。
-
-## 9. 生成与验证 DMG
-
-```bash
-release_version="0.6.2"
-release_stage=$(mktemp -d /private/tmp/multitimer-dmg.XXXXXX)
-
-ditto dist/MultiTimer.app "$release_stage/MultiTimer.app"
-ln -s /Applications "$release_stage/Applications"
-
-hdiutil create \
-  -volname MultiTimer \
-  -srcfolder "$release_stage" \
-  -ov \
-  -format UDZO \
-  "dist/MultiTimer-${release_version}.dmg"
-
-shasum -a 256 "dist/MultiTimer-${release_version}.dmg" \
-  > "dist/MultiTimer-${release_version}.dmg.sha256"
-```
-
-验证：
-
-```bash
-hdiutil verify "dist/MultiTimer-${release_version}.dmg"
-shasum -a 256 -c "dist/MultiTimer-${release_version}.dmg.sha256"
-```
-
-还应挂载 DMG，并确认内部应用的版本、Bundle ID 和签名结构与 `dist/MultiTimer.app` 一致。
-
-- [ ] DMG 中存在 `MultiTimer.app`。
-- [ ] DMG 中存在指向 `/Applications` 的快捷方式。
-- [ ] `hdiutil verify` 通过。
-- [ ] SHA-256 校验通过。
-- [ ] 记录最终 DMG 的 SHA-256，Homebrew 必须使用这个值。
-
-## 10. 提交与推送主仓库
-
-发布前再次检查范围：
+## 10. 提交、推送与 GitHub Release
 
 ```bash
 git status --short
 git diff --check
-git diff --stat
-python -m unittest discover -s tests -v
-```
-
-只暂存本次相关文件，不使用 `git add .`：
-
-```bash
-git add \
-  MultiTimer.spec \
-  README.md \
-  RELEASE_WORKFLOW.md \
-  ROADMAP.md \
-  dark.png \
-  index.html \
-  light.png \
-  multitimer.py \
-  pyproject.toml \
-  tests
-```
-
-提交并推送：
-
-```bash
-git commit -m "feat: release MultiTimer ${release_version}"
+swift test
+git add README.md RELEASE_WORKFLOW.md ROADMAP.md FEATURE_TODO.md \
+  Package.swift Package.resolved MultiTimer MultiTimerCore MultiTimerCLI \
+  Support scripts Tests assets index.html en/index.html styles.css script.js \
+  light.png dark.png .gitignore
+git commit -m "feat: rewrite MultiTimer in Swift for 0.7.0"
 git push origin master
 ```
 
-- [ ] 工作树在提交后干净。
-- [ ] Commit 已推送到 `master`。
-- [ ] 不包含 `build/`、`dist/` 或本地缓存。
-
-## 11. 创建 GitHub Release
-
-先确认版本不存在：
+创建 Release：
 
 ```bash
-gh release view "v${release_version}" --repo EchoForger/multi-timer
-```
-
-创建正式 Release，并上传 DMG 与校验文件：
-
-```bash
-gh release create "v${release_version}" \
-  "dist/MultiTimer-${release_version}.dmg" \
-  "dist/MultiTimer-${release_version}.dmg.sha256" \
+gh release create v0.7.0 \
+  dist/MultiTimer-0.7.0.dmg \
+  dist/MultiTimer-0.7.0.dmg.sha256 \
   --repo EchoForger/multi-timer \
   --target master \
-  --title "MultiTimer ${release_version}" \
-  --notes "在这里写完整、面向用户的更新日志"
+  --title "MultiTimer 0.7.0" \
+  --notes-file /private/tmp/multitimer-0.7.0-notes.md
 ```
 
-Release Notes 要求：
+Release Notes 至少说明：原生 Swift 重构、数据兼容、菜单栏可靠性、原生 UI、CLI/URL、通知/更新、最低系统版本和未公证提示。
 
-- [ ] 开头概括版本价值。
-- [ ] 逐条覆盖本次已完成需求。
-- [ ] 单独列出自动化、更新、UI 与文档变化。
-- [ ] 保留未签名、未公证提示。
-- [ ] 使用可被 GitHub Atom Feed 正常转换的标题和列表。
+## 11. Homebrew Tap
 
-验证公开 Release：
+仓库：`EchoForger/homebrew-tap`。
 
-```bash
-gh release view "v${release_version}" \
-  --repo EchoForger/multi-timer \
-  --json url,tagName,isDraft,isPrerelease,assets,publishedAt
-```
+`Casks/multi-timer.rb` 必须：
 
-再用应用自身的 `_fetch_latest_release()` 验证它能识别新版本、DMG 名称和完整更新日志。
-
-## 12. 更新 Homebrew Tap
-
-仓库：`EchoForger/homebrew-tap`
-
-在临时目录克隆 tap：
-
-```bash
-git clone \
-  https://github.com/EchoForger/homebrew-tap.git \
-  /private/tmp/homebrew-tap
-```
-
-修改 `Casks/multi-timer.rb`：
-
-- [ ] `version` 改为本次版本。
-- [ ] `sha256` 使用最终公开 DMG 的真实 SHA-256。
-- [ ] URL 仍指向 `v#{version}/MultiTimer-#{version}.dmg`。
+- [ ] `version "0.7.0"`。
+- [ ] `sha256` 使用公开 DMG 的真实值。
+- [ ] URL 指向 `v#{version}/MultiTimer-#{version}.dmg`。
 - [ ] 保留 `app "MultiTimer.app"`。
-- [ ] 保留 `binary` stanza，让 `multitimer` 命令进入 Homebrew `bin`。
-- [ ] 保留 Gatekeeper caveats 和 zap 路径。
+- [ ] CLI 改为：
 
-格式检查：
-
-```bash
-brew style /private/tmp/homebrew-tap/Casks/multi-timer.rb
+```ruby
+binary "#{appdir}/MultiTimer.app/Contents/Resources/bin/multitimer", target: "multitimer"
 ```
 
-提交和推送 tap：
+验证并推送：
 
 ```bash
-cd /private/tmp/homebrew-tap
-git add Casks/multi-timer.rb
-git commit -m "chore: update multi-timer to ${release_version}"
+brew style Casks/multi-timer.rb
+git add Casks/multi-timer.rb README.md
+git commit -m "chore: update multi-timer to 0.7.0"
 git push origin main
-```
 
-回到主仓库后刷新并验证公开 cask：
-
-```bash
 brew update
 brew info --cask echoforger/tap/multi-timer
 brew audit --cask --strict echoforger/tap/multi-timer
 brew fetch --cask --force echoforger/tap/multi-timer
 ```
 
-- [ ] `brew info` 显示新版本。
-- [ ] Artifacts 同时显示 App 和 `multitimer` Binary。
-- [ ] `brew audit` 通过。
-- [ ] `brew fetch` 下载并校验成功。
-- [ ] 除非用户要求，不执行本机 `brew upgrade`。
+除非用户明确要求，不执行本机 `brew upgrade`。
 
-## 13. 验证 GitHub Pages
+## 12. 最终交付
 
-官网由主仓库 GitHub Pages 部署到：
-
-`https://echoforger.github.io/multi-timer/`
-
-确认新版内容已经公开：
-
-```bash
-curl -fsSL https://echoforger.github.io/multi-timer/ \
-  | rg '本版本新增的官网关键词'
-```
-
-- [ ] 首页显示新版功能文字。
-- [ ] 中文和英文页面都可访问，语言按钮能双向切换。
-- [ ] 浅色和深色截图是新版。
-- [ ] 下载按钮进入最新 Release。
-- [ ] Homebrew 命令准确。
-- [ ] 页面没有源码安装入口。
-
-## 14. 保留旧版测试自动更新
-
-如果要测试 `旧版本 → 新版本`：
-
-- [ ] 发布新版本前确认本机安装的是旧版本。
-- [ ] 不运行 `brew upgrade`，也不替换 `/Applications/MultiTimer.app`。
-- [ ] 新版本发布完成后，退出并重新打开旧版，触发启动检查。
-- [ ] 或在 `ⓘ → 检查更新` 中手动触发。
-- [ ] 验证版本号、完整更新日志以及三个选择按钮。
-- [ ] Homebrew 来源应后台执行指定 cask 更新。
-- [ ] DMG 来源应下载、校验并替换应用。
-
-注意：更新确认界面由“当前正在运行的旧版本”提供。某个版本新加入的更新 UI，只能在它升级到下一版本时完整测试。若要专门验证新版更新器，需要再发布一个测试补丁版本，或使用本地模拟 Release。
-
-## 15. 最终交付清单
-
-- [ ] 所有用户勾选需求已经实现。
-- [ ] 单元测试、语法检查、UI 预览和应用包冒烟测试通过。
-- [ ] `MultiTimer.app` 版本与元数据正确。
-- [ ] DMG 与 SHA-256 已验证。
-- [ ] 主仓库已提交并推送。
-- [ ] GitHub Release 已公开，更新日志可被应用读取。
-- [ ] Homebrew cask 已推送、审计和下载验证通过。
-- [ ] 官网已部署新版文字与截图。
-- [ ] 本机是否升级符合用户要求。
-- [ ] 没有残留测试进程。
-- [ ] 最终回复包含版本号、Release、官网、Homebrew、提交号和验证结果。
-
-## 常见问题
-
-### 检查更新出现 GitHub 403
-
-不要切回未认证 REST API。优先检查 `/releases/latest` 重定向和 `releases.atom` 是否可访问。
-
-### `brew upgrade` 提示已经是最新版
-
-依次确认：
-
-1. GitHub Release 已公开，不是 Draft。
-2. Homebrew tap 中的版本和 SHA 已推送。
-3. 已运行 `brew update`。
-4. `brew info --cask echoforger/tap/multi-timer` 显示新版本。
-
-### 菜单栏图标不显示
-
-1. 确认没有同 Bundle ID 的重复进程。
-2. 确认 `LSUIElement=true`，正常启动没有在运行时覆盖 activation policy。
-3. 确认状态栏项目使用 AppKit 默认 `Item-0`，没有额外的 `autosaveName` 或 removal behavior。
-4. 检查“系统设置 → 菜单栏 → 允许在菜单栏中”中的 MultiTimer 开关。
-5. 使用应用内状态栏自检和“重新创建图标”。
-
-如果日志出现 `Starting to track blocked host`，但系统设置中 MultiTimer 自己的开关仍为开启，检查 macOS 26 是否把 MultiTimer 的菜单项错误记录到了另一个被关闭的应用下。这是 Control Center 的 `trackedApplications` 归属问题，不要通过新增 `autosaveName` 或反复重建状态项规避。
-
-如果日志出现 `Adding menu item at .bundle(MultiTimer) to tracked application at .bundle(另一个应用)`，说明打包应用被直接执行并继承了父应用的 XPC 身份。GUI 必须通过 LaunchServices 启动；CLI 子命令仍可直接执行二进制。
-
-每 0.5 秒出现 Control Center `SceneFenceAction` 不一定来自状态栏标题；Popover 关闭时更新隐藏的计时器控件也会触发场景提交。关闭面板时只更新计时逻辑和菜单栏摘要，重新打开面板前再刷新行内容。
-
-### URL Scheme 测试没有创建计时器
-
-通常是旧版同 Bundle ID 进程仍在运行，导致测试包的单实例保护直接退出。正常退出旧版、启动测试包，再发送 URL；测试后恢复旧版。
-
-### PyInstaller 清理缓存时报权限错误
-
-PyInstaller 的用户缓存位于 `~/Library/Application Support/pyinstaller`。在受限环境中需要获得权限后重新执行同一个构建命令，不要绕过缓存或改写用户目录。
+- [ ] Swift 测试、App 构建、签名、菜单栏、Popover、CLI、URL 与通知冒烟测试通过。
+- [ ] DMG 与 SHA-256 公开且可下载。
+- [ ] 主仓库提交推送，GitHub Release 已发布。
+- [ ] Homebrew cask 推送并通过下载校验。
+- [ ] GitHub Pages 已显示 0.7.0 的原生截图和正确安装方式。
+- [ ] 未留下预览实例或测试状态干扰用户。
+- [ ] 最终回复包含版本、提交、Release、官网、Homebrew 和验证结果。

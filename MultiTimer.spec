@@ -56,8 +56,8 @@ app = BUNDLE(
         'NSHighResolutionCapable': True,
         'CFBundleName': 'MultiTimer',
         'CFBundleDisplayName': 'MultiTimer',
-        'CFBundleShortVersionString': '0.6.1',
-        'CFBundleVersion': '0.6.1',
+        'CFBundleShortVersionString': '0.6.2',
+        'CFBundleVersion': '0.6.2',
         'CFBundleDevelopmentRegion': 'en',
         'CFBundleLocalizations': ['en', 'zh-Hans'],
         'CFBundleURLTypes': [{

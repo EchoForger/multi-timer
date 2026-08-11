@@ -48,7 +48,7 @@ git log -1 --oneline
 设置本次版本变量，后续命令统一引用：
 
 ```bash
-release_version="0.6.1"
+release_version="0.6.2"
 ```
 
 必须同步修改：
@@ -77,9 +77,9 @@ rg -n 'APP_VERSION|CFBundleShortVersionString|CFBundleVersion|^version =' \
 ### 菜单栏与 UI
 
 - [ ] `MultiTimer.spec` 保留 `'LSUIElement': True`。
-- [ ] 正常启动使用 `NSApplicationActivationPolicyAccessory`。
+- [ ] 正常启动由应用包中的 `LSUIElement=true` 管理纯菜单栏生命周期；不要在运行时覆盖 activation policy。
 - [ ] 设置入口仍从 Popover 打开，不创建独立常驻窗口。
-- [ ] 正式版状态栏项目使用稳定且唯一的 `autosaveName`；开发版使用不同名称，避免共享 Control Center 状态。
+- [ ] 状态栏项目沿用 AppKit 默认 `Item-0` 身份，不设置 `autosaveName` 或移除行为，与 TomatoBar 的原生实现保持一致。
 - [ ] 控件优先使用 AppKit 原生控件和 SF Symbols。
 - [ ] 卡片宽度一致，按钮不被压缩或截断。
 - [ ] 分别检查没有计时器、多个倒计时、秒表、暂停、完成和长名称。
@@ -268,7 +268,7 @@ dist/MultiTimer.app/Contents/MacOS/MultiTimer list
 ## 9. 生成与验证 DMG
 
 ```bash
-release_version="0.6.1"
+release_version="0.6.2"
 release_stage=$(mktemp -d /private/tmp/multitimer-dmg.XXXXXX)
 
 ditto dist/MultiTimer.app "$release_stage/MultiTimer.app"
@@ -493,12 +493,12 @@ curl -fsSL https://echoforger.github.io/multi-timer/ \
 ### 菜单栏图标不显示
 
 1. 确认没有同 Bundle ID 的重复进程。
-2. 确认 `LSUIElement=true` 且使用 Accessory activation policy。
-3. 确认正式版使用稳定的 status item `autosaveName`，开发版使用独立名称；不要移除明确标识，也不要让两个环境复用同一个标识。
+2. 确认 `LSUIElement=true`，正常启动没有在运行时覆盖 activation policy。
+3. 确认状态栏项目使用 AppKit 默认 `Item-0`，没有额外的 `autosaveName` 或 removal behavior。
 4. 检查“系统设置 → 菜单栏 → 允许在菜单栏中”中的 MultiTimer 开关。
 5. 使用应用内状态栏自检和“重新创建图标”。
 
-如果日志出现 `Created ephemeral instance`、`Moving host to blocked list` 和 `hiding status items`，优先检查状态栏项目是否缺少稳定 `autosaveName`。正式版必须使用稳定标识，开发版应使用另一个稳定标识。
+如果日志出现 `Starting to track blocked host`，但系统设置中 MultiTimer 自己的开关仍为开启，检查 macOS 26 是否把 MultiTimer 的菜单项错误记录到了另一个被关闭的应用下。这是 Control Center 的 `trackedApplications` 归属问题，不要通过新增 `autosaveName` 或反复重建状态项规避。
 
 如果日志出现 `Adding menu item at .bundle(MultiTimer) to tracked application at .bundle(另一个应用)`，说明打包应用被直接执行并继承了父应用的 XPC 身份。GUI 必须通过 LaunchServices 启动；CLI 子命令仍可直接执行二进制。
 

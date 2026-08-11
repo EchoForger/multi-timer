@@ -73,11 +73,8 @@ from AppKit import (
     NSApplication,
     NSApp,
     NSRunningApplication,
-    NSApplicationActivationPolicyAccessory,
     NSApplicationActivationPolicyRegular,
     NSStatusBar,
-    NSStatusItemBehaviorRemovalAllowed,
-    NSSquareStatusItemLength,
     NSVariableStatusItemLength,
     NSMenu,
     NSMenuItem,
@@ -133,15 +130,13 @@ from AppKit import (
     NSControlStateValueOff,
     NSSwitchButton,
     NSImageLeft,
-    NSImageOnly,
 )
 
 APP_NAME = "MultiTimer"
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.6.2"
 # Keep one stable identity across installs, login items, notifications,
 # URL handling, and Control Center status-item restoration.
 APP_BUNDLE_ID = "io.github.echoforger.multitimer"
-STATUS_ITEM_AUTOSAVE_NAME = f"{APP_BUNDLE_ID}.primary"
 APP_COPYRIGHT = "© 2026 EchoForger"
 APP_HOMEPAGE = "https://echoforger.github.io/multi-timer/"
 APP_REPOSITORY = "https://github.com/EchoForger/multi-timer"
@@ -288,13 +283,6 @@ def _language_for_settings(settings: dict) -> str:
     # Per-app language is managed by macOS in Language & Region. NSLocale
     # reflects that application-specific choice at the next launch.
     return _system_language()
-
-
-def _status_item_autosave_name() -> str:
-    """Keep production and source builds from sharing Control Center state."""
-    if getattr(sys, "frozen", False):
-        return STATUS_ITEM_AUTOSAVE_NAME
-    return f"{STATUS_ITEM_AUTOSAVE_NAME}.development"
 
 
 def _parse_multitimer_url(value: str) -> dict:
@@ -1765,13 +1753,12 @@ class MultiTimerApp(NSObject):
         return value.format(**values) if values else value
 
     def applicationDidFinishLaunching_(self, _notification):
-        """Create the status item only after AppKit has finished launching."""
+        """Create the menu-bar UI immediately after AppKit finishes launching."""
         if self._did_finish_launching:
             return
         self._did_finish_launching = True
-        if not self._prepare_launch_permissions():
-            return
         self._finish_launch()
+        self._prepare_launch_permissions()
 
     def _prepare_launch_permissions(self):
         if not _can_use_user_notifications():
@@ -1884,14 +1871,11 @@ class MultiTimerApp(NSObject):
     # -- 菜单栏图标 --------------------------------------------------------
     def _build_status_item(self):
         bar = NSStatusBar.systemStatusBar()
-        wants_summary = self.settings.get("show_remaining") or self.settings.get("show_count")
-        initial_length = NSVariableStatusItemLength if wants_summary else NSSquareStatusItemLength
-        self.status_item = bar.statusItemWithLength_(initial_length)
+        # Match the native lifecycle used by established menu-bar apps such as
+        # TomatoBar: create one strongly-held variable-length status item as
+        # soon as the application delegate finishes launching.
+        self.status_item = bar.statusItemWithLength_(NSVariableStatusItemLength)
         self._status_signature = None
-        if self.status_item.respondsToSelector_("setAutosaveName:"):
-            self.status_item.setAutosaveName_(_status_item_autosave_name())
-        if self.status_item.respondsToSelector_("setBehavior:"):
-            self.status_item.setBehavior_(NSStatusItemBehaviorRemovalAllowed)
         btn = self.status_item.button()
         btn.setToolTip_(APP_NAME)
         btn.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(12, NSFontWeightMedium))
@@ -1902,7 +1886,7 @@ class MultiTimerApp(NSObject):
             img.setTemplate_(True)
             self._default_status_image = img
             btn.setImage_(img)
-            btn.setImagePosition_(NSImageOnly)
+            btn.setImagePosition_(NSImageLeft)
         else:
             btn.setTitle_("⏱")
         toggle = _Action.alloc().initWithCallback_(lambda s: self._toggle_popover())
@@ -1980,8 +1964,8 @@ class MultiTimerApp(NSObject):
         self._restore_default_status_image()
         button = self.status_item.button()
         button.setTitle_(title)
-        button.setImagePosition_(NSImageLeft if title else NSImageOnly)
-        self.status_item.setLength_(NSVariableStatusItemLength if title else NSSquareStatusItemLength)
+        button.setImagePosition_(NSImageLeft)
+        self.status_item.setLength_(NSVariableStatusItemLength)
         self._status_signature = signature
 
     def _verify_status_item(self):
@@ -3952,12 +3936,11 @@ def main():
             # instance also prevents duplicate status-item hosts in Control
             # Center, which can otherwise make macOS hide both of them.
             return
-    policy = (
-        NSApplicationActivationPolicyRegular
-        if preview
-        else NSApplicationActivationPolicyAccessory
-    )
-    app.setActivationPolicy_(policy)  # 正常运行时不显示 Dock 图标
+    # LSUIElement in the app bundle owns normal menu-bar-only activation.
+    # Avoid overriding that native agent lifecycle at runtime. Preview mode is
+    # the only case that opts into a regular Dock/window application.
+    if preview:
+        app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
     appearance = os.environ.get("MULTITIMER_APPEARANCE", "").lower()
     if appearance in {"light", "dark"}:
         appearance_name = NSAppearanceNameDarkAqua if appearance == "dark" else NSAppearanceNameAqua

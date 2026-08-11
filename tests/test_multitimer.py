@@ -57,15 +57,7 @@ class MultiTimerLogicTests(unittest.TestCase):
             self.assertFalse(multitimer._relaunch_via_launchservices_if_needed())
         run.assert_not_called()
 
-    def test_status_item_uses_separate_stable_names_for_release_and_development(self):
-        with mock.patch.object(multitimer.sys, "frozen", True, create=True):
-            release_name = multitimer._status_item_autosave_name()
-        with mock.patch.object(multitimer.sys, "frozen", False, create=True):
-            development_name = multitimer._status_item_autosave_name()
-        self.assertEqual(release_name, multitimer.STATUS_ITEM_AUTOSAVE_NAME)
-        self.assertEqual(development_name, f"{release_name}.development")
-
-    def test_status_item_allows_removal_without_terminating(self):
+    def test_status_item_cannot_be_removed_from_menu_bar(self):
         status_item = mock.Mock()
         status_item.respondsToSelector_.return_value = True
         status_bar = mock.Mock()
@@ -88,12 +80,8 @@ class MultiTimerLogicTests(unittest.TestCase):
             action.alloc.return_value.initWithCallback_.return_value = mock.Mock()
             multitimer.MultiTimerApp._build_status_item(app)
 
-        status_item.setAutosaveName_.assert_called_once_with(
-            multitimer._status_item_autosave_name()
-        )
-        status_item.setBehavior_.assert_called_once_with(
-            multitimer.NSStatusItemBehaviorRemovalAllowed
-        )
+        status_item.setAutosaveName_.assert_not_called()
+        status_item.setBehavior_.assert_not_called()
         status_item.setVisible_.assert_not_called()
 
     def test_status_item_check_respects_control_center_visibility(self):
@@ -133,11 +121,8 @@ class MultiTimerLogicTests(unittest.TestCase):
         app._open_url.assert_not_called()
         status_item.setVisible_.assert_not_called()
 
-    def test_main_uses_accessory_policy_except_in_preview(self):
-        for preview, expected_policy in (
-            (False, multitimer.NSApplicationActivationPolicyAccessory),
-            (True, multitimer.NSApplicationActivationPolicyRegular),
-        ):
+    def test_main_lets_lsui_element_own_normal_activation_policy(self):
+        for preview in (False, True):
             with self.subTest(preview=preview):
                 app = mock.Mock()
                 delegate = mock.Mock()
@@ -161,7 +146,12 @@ class MultiTimerLogicTests(unittest.TestCase):
                     mock.patch.dict(multitimer.os.environ, environment, clear=True),
                 ):
                     multitimer.main()
-                app.setActivationPolicy_.assert_called_once_with(expected_policy)
+                if preview:
+                    app.setActivationPolicy_.assert_called_once_with(
+                        multitimer.NSApplicationActivationPolicyRegular
+                    )
+                else:
+                    app.setActivationPolicy_.assert_not_called()
 
     def test_status_time_uses_stable_hour_minute_format(self):
         self.assertEqual(multitimer.fmt_status_remaining(0), "00:00")

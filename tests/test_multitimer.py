@@ -20,6 +20,26 @@ class _Switch:
 
 
 class MultiTimerLogicTests(unittest.TestCase):
+    def test_homebrew_updater_uses_generic_tap(self):
+        with (
+            mock.patch.object(multitimer, "_find_brew", return_value="/opt/homebrew/bin/brew"),
+            mock.patch.object(multitimer, "_run_checked") as run_checked,
+            mock.patch.object(multitimer, "_best_installed_bundle_path", return_value=None),
+        ):
+            multitimer._upgrade_via_homebrew("9.0.0")
+
+        run_checked.assert_called_once_with(
+            [
+                "/opt/homebrew/bin/brew",
+                "upgrade",
+                "--cask",
+                "--no-quit",
+                "echoforger/tap/multi-timer",
+            ],
+            1200,
+            "Homebrew 升级 MultiTimer 失败",
+        )
+
     def test_frozen_gui_relaunches_when_it_inherits_a_foreign_xpc_identity(self):
         completed = mock.Mock(returncode=0)
         with (

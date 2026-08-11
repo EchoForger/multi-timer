@@ -40,7 +40,7 @@
 ### Homebrew
 
 ```bash
-brew tap EchoForger/multi-timer
+brew tap EchoForger/tap
 brew install --cask multi-timer
 ```
 

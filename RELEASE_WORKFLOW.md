@@ -188,7 +188,7 @@ python multitimer.py
 - [ ] Homebrew 命令保持：
 
 ```bash
-brew tap EchoForger/multi-timer
+brew tap EchoForger/tap
 brew install --cask multi-timer
 ```
 
@@ -378,14 +378,14 @@ gh release view "v${release_version}" \
 
 ## 12. 更新 Homebrew Tap
 
-仓库：`EchoForger/homebrew-multi-timer`
+仓库：`EchoForger/homebrew-tap`
 
 在临时目录克隆 tap：
 
 ```bash
 git clone \
-  https://github.com/EchoForger/homebrew-multi-timer.git \
-  /private/tmp/homebrew-multi-timer
+  https://github.com/EchoForger/homebrew-tap.git \
+  /private/tmp/homebrew-tap
 ```
 
 修改 `Casks/multi-timer.rb`：
@@ -400,13 +400,13 @@ git clone \
 格式检查：
 
 ```bash
-brew style /private/tmp/homebrew-multi-timer/Casks/multi-timer.rb
+brew style /private/tmp/homebrew-tap/Casks/multi-timer.rb
 ```
 
 提交和推送 tap：
 
 ```bash
-cd /private/tmp/homebrew-multi-timer
+cd /private/tmp/homebrew-tap
 git add Casks/multi-timer.rb
 git commit -m "chore: update multi-timer to ${release_version}"
 git push origin main
@@ -416,9 +416,9 @@ git push origin main
 
 ```bash
 brew update
-brew info --cask echoforger/multi-timer/multi-timer
-brew audit --cask --strict echoforger/multi-timer/multi-timer
-brew fetch --cask --force echoforger/multi-timer/multi-timer
+brew info --cask echoforger/tap/multi-timer
+brew audit --cask --strict echoforger/tap/multi-timer
+brew fetch --cask --force echoforger/tap/multi-timer
 ```
 
 - [ ] `brew info` 显示新版本。
@@ -488,7 +488,7 @@ curl -fsSL https://echoforger.github.io/multi-timer/ \
 1. GitHub Release 已公开，不是 Draft。
 2. Homebrew tap 中的版本和 SHA 已推送。
 3. 已运行 `brew update`。
-4. `brew info --cask echoforger/multi-timer/multi-timer` 显示新版本。
+4. `brew info --cask echoforger/tap/multi-timer` 显示新版本。
 
 ### 菜单栏图标不显示
 

@@ -140,6 +140,7 @@ APP_BUNDLE_ID = "io.github.echoforger.multitimer"
 APP_COPYRIGHT = "© 2026 EchoForger"
 APP_HOMEPAGE = "https://echoforger.github.io/multi-timer/"
 APP_REPOSITORY = "https://github.com/EchoForger/multi-timer"
+HOMEBREW_CASK = "echoforger/tap/multi-timer"
 LATEST_RELEASE_URL = f"{APP_REPOSITORY}/releases/latest"
 RELEASES_FEED_URL = f"{APP_REPOSITORY}/releases.atom"
 STATE_PATH = Path(
@@ -608,7 +609,7 @@ def _upgrade_via_homebrew(expected_version: str):
     if not brew:
         raise RuntimeError("未找到 Homebrew，无法自动更新")
     _run_checked(
-        [brew, "upgrade", "--cask", "--no-quit", "echoforger/multi-timer/multi-timer"],
+        [brew, "upgrade", "--cask", "--no-quit", HOMEBREW_CASK],
         1200,
         "Homebrew 升级 MultiTimer 失败",
     )
@@ -618,7 +619,7 @@ def _upgrade_via_homebrew(expected_version: str):
         # force a source refresh when the targeted upgrade left an old build.
         _run_checked([brew, "update"], 600, "Homebrew 更新软件源失败")
         _run_checked(
-            [brew, "upgrade", "--cask", "--no-quit", "echoforger/multi-timer/multi-timer"],
+            [brew, "upgrade", "--cask", "--no-quit", HOMEBREW_CASK],
             1200,
             "Homebrew 升级 MultiTimer 失败",
         )
@@ -2493,7 +2494,7 @@ class MultiTimerApp(NSObject):
             brew = _find_brew() or "brew"
             update_detail += (
                 f"\n\n{self.tr('brew_will_run')}\n"
-                f"{brew} upgrade --cask --no-quit echoforger/multi-timer/multi-timer"
+                f"{brew} upgrade --cask --no-quit {HOMEBREW_CASK}"
             )
         response, auto_update = self._show_update_alert(
             self.tr("found_update", version=latest), update_detail

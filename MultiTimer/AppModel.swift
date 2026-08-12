@@ -10,7 +10,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var timers: [TimerRecord]
     @Published var settings: AppSettings
     @Published private(set) var now = Date().timeIntervalSince1970
-    @Published private(set) var pomodoro = PomodoroSnapshot()
+    @Published private(set) var pomodoro: PomodoroSnapshot
     @Published private(set) var stats: PomodoroStats
 
     private let stateStore: StateStore
@@ -30,7 +30,16 @@ final class AppModel: ObservableObject {
         document = stateStore.load()
         timers = document.timers
         settings = document.settings
+        pomodoro = document.pomodoro
         stats = statsStore.load()
+        if pomodoro.phase == .work, pomodoro.focusStartedAt == nil {
+            if let pausedRemaining = pomodoro.pausedRemaining {
+                let elapsed = max(0, TimeInterval(settings.pomodoroWorkSeconds) - pausedRemaining)
+                pomodoro.focusStartedAt = max(0, now - elapsed)
+            } else {
+                pomodoro.focusStartedAt = max(0, (pomodoro.finishAt ?? now) - TimeInterval(settings.pomodoroWorkSeconds))
+            }
+        }
 
         ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -73,14 +82,20 @@ final class AppModel: ObservableObject {
     }
 
     var todayCount: Int {
-        stats.days[StatsStore.dayKey(), default: 0]
+        stats.sessions.filter { session in
+            session.completed && session.endedAt.map { Calendar.current.isDateInToday(Date(timeIntervalSince1970: $0)) } == true
+        }.count
+    }
+
+    var todayFocusSessionCount: Int {
+        stats.sessions.filter { Calendar.current.isDateInToday(Date(timeIntervalSince1970: $0.startedAt)) }.count
     }
 
     func startCountdown(label: String, seconds: Int) {
         let duration = min(max(1, seconds), DurationParser.maximumSeconds)
         let start = Date().timeIntervalSince1970
         timers.append(TimerRecord(
-            label: cleanLabel(label),
+            label: cleanLabel(label, kind: .countdown),
             kind: .countdown,
             startTS: start,
             endTS: start + TimeInterval(duration),
@@ -93,7 +108,7 @@ final class AppModel: ObservableObject {
         let start = Date().timeIntervalSince1970
         let duration = max(1, target.timeIntervalSince1970 - start)
         timers.append(TimerRecord(
-            label: cleanLabel(label),
+            label: cleanLabel(label, kind: .countdown),
             kind: .countdown,
             startTS: start,
             endTS: target.timeIntervalSince1970,
@@ -103,12 +118,13 @@ final class AppModel: ObservableObject {
     }
 
     func startStopwatch(label: String) {
-        timers.append(TimerRecord(label: cleanLabel(label), kind: .stopwatch))
+        timers.append(TimerRecord(label: cleanLabel(label, kind: .stopwatch), kind: .stopwatch))
         save()
     }
 
     func rename(_ id: String, label: String) {
-        mutate(id) { $0.label = cleanLabel(label) }
+        guard let kind = timers.first(where: { $0.id == id })?.kind else { return }
+        mutate(id) { $0.label = cleanLabel(label, kind: kind) }
     }
 
     func togglePause(_ id: String) {
@@ -185,15 +201,14 @@ final class AppModel: ObservableObject {
     func startPomodoro() {
         switch pomodoro.phase {
         case .idle, .ready:
-            pomodoro.phase = .work
-            pomodoro.pausedRemaining = nil
-            pomodoro.finishAt = now + TimeInterval(settings.pomodoroWorkSeconds)
+            beginWork()
         case .work, .rest:
             if let paused = pomodoro.pausedRemaining {
                 pomodoro.finishAt = now + paused
                 pomodoro.pausedRemaining = nil
             }
         }
+        save()
         onStatusChanged?()
     }
 
@@ -206,18 +221,21 @@ final class AppModel: ObservableObject {
             pomodoro.pausedRemaining = pomodoroRemaining
             pomodoro.finishAt = nil
         }
+        save()
         onStatusChanged?()
     }
 
     func skipPomodoro() {
         switch pomodoro.phase {
         case .work:
+            finishFocusSession(completed: false, at: now)
             beginRest()
         case .rest:
             beginWork()
         case .ready, .idle:
             beginWork()
         }
+        save()
     }
 
     func extendPomodoro(by seconds: Int = 300) {
@@ -227,18 +245,21 @@ final class AppModel: ObservableObject {
         } else {
             pomodoro.finishAt = (pomodoro.finishAt ?? now) + TimeInterval(seconds)
         }
+        save()
         onStatusChanged?()
     }
 
     func stopPomodoro() {
+        if pomodoro.phase == .work { finishFocusSession(completed: false, at: now) }
         pomodoro = PomodoroSnapshot()
+        save()
         onStatusChanged?()
     }
 
     func updateSettings(_ update: (inout AppSettings) -> Void) {
         update(&settings)
-        settings.pomodoroWorkSeconds = min(max(1, settings.pomodoroWorkSeconds), 3_599)
-        settings.pomodoroBreakSeconds = min(max(1, settings.pomodoroBreakSeconds), 3_599)
+        settings.pomodoroWorkSeconds = min(max(60, settings.pomodoroWorkSeconds), 7_200)
+        settings.pomodoroBreakSeconds = min(max(60, settings.pomodoroBreakSeconds), 3_600)
         save()
     }
 
@@ -262,9 +283,11 @@ final class AppModel: ObservableObject {
             changed = true
         }
         if let cloudStats, cloudStats.syncRevision > stats.syncRevision {
-            for (day, count) in cloudStats.days {
-                stats.days[day] = max(stats.days[day, default: 0], count)
+            var sessionsByID = Dictionary(uniqueKeysWithValues: stats.sessions.map { ($0.id, $0) })
+            for session in cloudStats.sessions {
+                sessionsByID[session.id] = session
             }
+            stats.sessions = sessionsByID.values.sorted { $0.startedAt < $1.startedAt }
             stats.syncRevision = cloudStats.syncRevision
             try? statsStore.save(stats)
             changed = true
@@ -278,9 +301,16 @@ final class AppModel: ObservableObject {
             ?? timers.first { $0.label.lowercased() == needle }
     }
 
-    private func cleanLabel(_ label: String) -> String {
+    private func cleanLabel(_ label: String, kind: TimerKind) -> String {
         let clean = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        return clean.isEmpty ? NSLocalizedString("Untitled Timer", comment: "Default timer name") : clean
+        guard clean.isEmpty else { return clean }
+        let base = kind == .countdown
+            ? NSLocalizedString("Countdown", comment: "Default countdown name")
+            : NSLocalizedString("Stopwatch", comment: "Default stopwatch name")
+        let existing = Set(timers.filter { $0.kind == kind }.map(\.label))
+        var number = 1
+        while existing.contains("\(base) \(number)") { number += 1 }
+        return "\(base) \(number)"
     }
 
     private func mutate(_ id: String, operation: (inout TimerRecord) -> Void) {
@@ -290,9 +320,10 @@ final class AppModel: ObservableObject {
     }
 
     private func save() {
-        document.schemaVersion = 3
+        document.schemaVersion = 5
         document.timers = timers
         document.settings = settings
+        document.pomodoro = pomodoro
         settings.syncRevision = Date().timeIntervalSince1970
         document.settings = settings
         try? stateStore.save(document)
@@ -319,8 +350,7 @@ final class AppModel: ObservableObject {
               pomodoroRemaining <= 0 else { return }
         let completed = pomodoro.phase
         if completed == .work {
-            stats = statsStore.recordCompletion()
-            onPersistenceChanged?()
+            finishFocusSession(completed: true, at: pomodoro.finishAt ?? now)
             beginRest()
         } else if settings.pomodoroAutoCycle {
             beginWork()
@@ -328,6 +358,7 @@ final class AppModel: ObservableObject {
             pomodoro.phase = .ready
             pomodoro.finishAt = nil
         }
+        save()
         onPomodoroFinished?(completed)
         onStatusChanged?()
     }
@@ -336,6 +367,7 @@ final class AppModel: ObservableObject {
         pomodoro.phase = .work
         pomodoro.pausedRemaining = nil
         pomodoro.finishAt = now + TimeInterval(settings.pomodoroWorkSeconds)
+        pomodoro.focusStartedAt = now
         onStatusChanged?()
     }
 
@@ -343,6 +375,20 @@ final class AppModel: ObservableObject {
         pomodoro.phase = .rest
         pomodoro.pausedRemaining = nil
         pomodoro.finishAt = now + TimeInterval(settings.pomodoroBreakSeconds)
+        pomodoro.focusStartedAt = nil
         onStatusChanged?()
+    }
+
+    private func finishFocusSession(completed: Bool, at endedAt: TimeInterval) {
+        guard let startedAt = pomodoro.focusStartedAt else { return }
+        stats.sessions.append(FocusSession(startedAt: startedAt, endedAt: max(startedAt, endedAt), completed: completed))
+        pomodoro.focusStartedAt = nil
+        persistStats()
+    }
+
+    private func persistStats() {
+        stats.syncRevision = Date().timeIntervalSince1970
+        try? statsStore.save(stats)
+        onPersistenceChanged?()
     }
 }

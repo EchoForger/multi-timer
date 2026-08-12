@@ -80,26 +80,31 @@ public final class StatsStore: @unchecked Sendable {
         try AtomicJSON.save(stats, to: url)
     }
 
-    public static func dayKey(for date: Date = Date(), calendar: Calendar = .current) -> String {
-        let components = calendar.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
+    public func sessions(
+        in day: Date,
+        from stats: PomodoroStats? = nil,
+        calendar: Calendar = .current
+    ) -> [FocusSession] {
+        let stats = stats ?? load()
+        let dayStart = calendar.startOfDay(for: day).timeIntervalSince1970
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: day))!.timeIntervalSince1970
+        return stats.sessions.filter { session in
+            guard let endedAt = session.endedAt else { return false }
+            return session.startedAt < dayEnd && endedAt > dayStart
+        }
     }
 
-    public func recordCompletion(at date: Date = Date()) -> PomodoroStats {
-        var stats = load()
-        stats.days[Self.dayKey(for: date), default: 0] += 1
-        stats.syncRevision = date.timeIntervalSince1970
-        try? save(stats)
-        return stats
-    }
-
-    public func denseSeries(days count: Int = 30, endingAt date: Date = Date()) -> [(String, Int)] {
-        let stats = load()
-        let calendar = Calendar.current
-        return (0..<count).reversed().compactMap { offset in
-            guard let day = calendar.date(byAdding: .day, value: -offset, to: date) else { return nil }
-            let key = Self.dayKey(for: day, calendar: calendar)
-            return (key, stats.days[key, default: 0])
+    public func focusedSeconds(
+        in day: Date,
+        from stats: PomodoroStats? = nil,
+        calendar: Calendar = .current
+    ) -> TimeInterval {
+        let dayStart = calendar.startOfDay(for: day).timeIntervalSince1970
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: day))!.timeIntervalSince1970
+        return sessions(in: day, from: stats, calendar: calendar).reduce(0) { total, session in
+            let start = max(dayStart, session.startedAt)
+            let end = min(dayEnd, session.endedAt ?? start)
+            return total + max(0, end - start)
         }
     }
 }

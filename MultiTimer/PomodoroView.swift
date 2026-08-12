@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PomodoroView: View {
     @ObservedObject var model: AppModel
+    let showStatistics: () -> Void
 
     var body: some View {
         GroupBox {
@@ -16,7 +17,7 @@ struct PomodoroView: View {
                         Text(TimeFormat.clock(model.pomodoroRemaining))
                             .font(.system(.title3, design: .monospaced).weight(.semibold))
                     } else {
-                        Text("Today \(model.todayCount)")
+                        Text("Today \(model.todayFocusSessionCount) · \(model.todayCount) completed")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -41,7 +42,16 @@ struct PomodoroView: View {
             }
             .padding(2)
         } label: {
-            Label("Pomodoro", systemImage: "brain.head.profile")
+            HStack {
+                Label("Pomodoro", systemImage: "brain.head.profile")
+                Spacer()
+                Button(action: showStatistics) {
+                    Label("Statistics", systemImage: "chart.bar.xaxis")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .help("Statistics")
+            }
         }
     }
 

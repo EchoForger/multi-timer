@@ -57,7 +57,7 @@ func parse(_ arguments: [String]) throws -> ControlCommand {
             throw CLIError.usage("Usage: multitimer start [NAME] MINUTES")
         }
         let name = rest.dropLast().joined(separator: " ")
-        return ControlCommand(action: "start", name: name.isEmpty ? "Timer" : name, seconds: seconds)
+        return ControlCommand(action: "start", name: name, seconds: seconds)
     case "list", "permissions": return ControlCommand(action: verb)
     case "pause", "cancel":
         guard !rest.isEmpty else { throw CLIError.usage("Usage: multitimer \(verb) ID_OR_NAME") }

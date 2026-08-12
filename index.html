@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f5f5f7">
-    <meta name="description" content="MultiTimer 是一款轻巧、原生的 macOS 菜单栏多任务倒计时器，另有按需打开的专注统计窗口。">
+    <meta name="description" content="MultiTimer 是一款轻巧、原生的 macOS 菜单栏多任务倒计时器，内置番茄钟和专注时间线。">
     <meta property="og:type" content="website">
     <meta property="og:title" content="MultiTimer — 多个倒计时，一个节奏">
     <meta property="og:description" content="同时管理工作、休息和生活节奏。原生、本地、开源。">
@@ -71,7 +71,7 @@
         <div class="hero-copy reveal">
           <p class="eyebrow"><span></span> 原生 macOS 菜单栏工具</p>
           <h1>倒计时很多，<br><em>菜单栏一个就够。</em></h1>
-          <p class="hero-lede">完整计时功能都在菜单栏；需要复盘时，再打开原生专注统计窗口。</p>
+          <p class="hero-lede">倒计时、秒表、番茄钟和专注时间线，都在一个原生菜单栏面板里。</p>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/EchoForger/multi-timer/releases/latest" target="_blank" rel="noreferrer">
               <span class="apple-mark" aria-hidden="true"></span> 下载 macOS 版
@@ -98,7 +98,7 @@
               data-dark-src="dark.png"
               alt="MultiTimer 同时运行番茄钟、倒计时和秒表的界面"
               width="316"
-              height="562"
+              height="535"
             >
           </div>
           <img class="floating-app-icon" src="assets/app-icon.png" alt="" width="92" height="92" aria-hidden="true">
@@ -108,12 +108,12 @@
       <section class="ticker" aria-label="核心能力">
         <div class="ticker-track">
           <span>独立番茄钟 <i></i></span>
-          <span>30 天专注统计 <i></i></span>
+          <span>24 小时专注时间线 <i></i></span>
           <span>多路并行 <i></i></span>
           <span>秒表计圈 <i></i></span>
           <span>等宽菜单栏摘要 <i></i></span>
           <span>原生通知 <i></i></span>
-          <span>目标时间 <i></i></span>
+          <span>动态响铃时间 <i></i></span>
           <span>自动恢复 <i></i></span>
           <span>深浅模式 <i></i></span>
           <span>完全本地 <i></i></span>
@@ -130,7 +130,7 @@
           <article class="feature feature-main reveal">
             <span class="feature-index">01 / MULTI</span>
             <h3>计时器与番茄钟，各有自己的节奏。</h3>
-            <p>倒计时、秒表与番茄钟都在菜单栏中完整管理；原生统计窗口按需展示 30 天趋势和 CSV 导出，关闭后重新回到纯菜单栏状态。</p>
+            <p>倒计时、秒表、番茄钟、设置与统计都在同一个固定宽度面板中管理；24 小时时间线记录每次专注的开始、结束和完成状态。</p>
             <div class="mini-timers" aria-hidden="true">
               <div><span><i></i>代码审查</span><b>24:18</b><em style="--p:72%"></em></div>
               <div><span><i></i>休息一下</span><b>04:32</b><em style="--p:42%"></em></div>
@@ -149,7 +149,7 @@
             <span class="feature-index">03 / PRIVATE</span>
             <div class="private-badge" aria-hidden="true">只在<br>这台 Mac</div>
             <h3>你的时间，不是遥测数据。</h3>
-            <p>不需要账户，没有遥测，默认只保存在本机。具备 Apple entitlement 的签名构建可选用 iCloud KVS 同步设置与聚合统计，运行中的计时状态不会上传。</p>
+            <p>不需要账户，没有遥测，默认只保存在本机。番茄钟记录只保存开始时间、结束时间和是否完整完成；每日统计由这些记录实时计算。</p>
           </article>
         </div>
       </section>
@@ -167,11 +167,11 @@
           <div class="dual-shots reveal" aria-label="MultiTimer 浅色和深色界面">
             <figure class="shot-card shot-light">
               <figcaption><span></span> Light</figcaption>
-              <img src="light.png" alt="MultiTimer 浅色紧凑界面" width="316" height="562">
+              <img src="light.png" alt="MultiTimer 浅色紧凑界面" width="316" height="535">
             </figure>
             <figure class="shot-card shot-dark">
               <figcaption><span></span> Dark</figcaption>
-              <img src="dark.png" alt="MultiTimer 深色紧凑界面" width="316" height="562">
+              <img src="dark.png" alt="MultiTimer 深色紧凑界面" width="316" height="535">
             </figure>
           </div>
         </div>

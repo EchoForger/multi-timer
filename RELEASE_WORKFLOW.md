@@ -31,7 +31,7 @@ git diff --stat
 - [ ] Release Notes 与 Homebrew cask。
 
 ```bash
-rg -n '0\.7\.0|CFBundleShortVersionString|CFBundleVersion|MULTITIMER_VERSION' \
+rg -n '0\.7\.1|CFBundleShortVersionString|CFBundleVersion|MULTITIMER_VERSION' \
   Support MultiTimer Scripts
 ```
 
@@ -62,7 +62,7 @@ SwiftPM 内部 GUI 产物叫 `MultiTimer`，CLI 产物必须叫 `MultiTimerCLI`�
 
 - [ ] 工作/休息、暂停、跳过、停止、延长 5 分钟与自动循环正常。
 - [ ] 只统计自然完成的工作阶段。
-- [ ] 今日数量、30 天趋势、CSV 导出与清空确认正常。
+- [ ] 每日 24 小时时间线、专注次数、完整番茄钟、CSV 导出与清空确认正常。
 - [ ] 工作和休息通知使用不同声音。
 
 ### 系统集成
@@ -72,7 +72,7 @@ SwiftPM 内部 GUI 产物叫 `MultiTimer`，CLI 产物必须叫 `MultiTimerCLI`�
 - [ ] `multitimer://start?name=Tea&minutes=5` 与番茄 URL 正常。
 - [ ] CLI 的 `start/list/pause/cancel/permissions/pomodoro` 正常。
 - [ ] 设置即时保存，无保存/取消按钮；语言按钮打开 macOS 语言设置。
-- [ ] iCloud entitlement 存在时同步设置与聚合统计；ad-hoc 构建安全回退本地。
+- [ ] iCloud entitlement 存在时同步设置与番茄钟结束记录；ad-hoc 构建安全回退本地。
 
 ### 更新
 
@@ -160,7 +160,7 @@ MULTITIMER_SOCKET_PATH=/private/tmp/multitimer-smoke.sock \
 
 - [ ] 进程持续驻留且菜单栏图标可见。
 - [ ] Popover 可开关，普通计时器、番茄钟和秒表可操作。
-- [ ] 默认无 Dock 图标；统计窗口打开时显示 Dock，关闭后消失。
+- [ ] 默认无 Dock 图标；设置和统计在菜单栏面板内切换，关闭后再次打开回到主页。
 - [ ] CLI 和 URL Scheme 创建的任务出现在同一实例。
 - [ ] 测试结束只终止工作区测试实例，不误杀安装版。
 
@@ -193,8 +193,8 @@ brew install --cask multi-timer
 
 ```bash
 ./scripts/package.sh
-hdiutil verify dist/MultiTimer-0.7.0.dmg
-(cd dist && shasum -a 256 -c MultiTimer-0.7.0.dmg.sha256)
+hdiutil verify dist/MultiTimer-0.7.1.dmg
+(cd dist && shasum -a 256 -c MultiTimer-0.7.1.dmg.sha256)
 ```
 
 - [ ] DMG 中包含 `MultiTimer.app` 与 `/Applications` 快捷方式。
@@ -211,20 +211,20 @@ git add README.md RELEASE_WORKFLOW.md ROADMAP.md FEATURE_TODO.md \
   Package.swift Package.resolved MultiTimer MultiTimerCore MultiTimerCLI \
   Support scripts Tests assets index.html en/index.html styles.css script.js \
   light.png dark.png .gitignore
-git commit -m "feat: rewrite MultiTimer in Swift for 0.7.0"
+git commit -m "feat: release MultiTimer 0.7.1"
 git push origin master
 ```
 
 创建 Release：
 
 ```bash
-gh release create v0.7.0 \
-  dist/MultiTimer-0.7.0.dmg \
-  dist/MultiTimer-0.7.0.dmg.sha256 \
+gh release create v0.7.1 \
+  dist/MultiTimer-0.7.1.dmg \
+  dist/MultiTimer-0.7.1.dmg.sha256 \
   --repo EchoForger/multi-timer \
   --target master \
-  --title "MultiTimer 0.7.0" \
-  --notes-file /private/tmp/multitimer-0.7.0-notes.md
+  --title "MultiTimer 0.7.1" \
+  --notes-file /private/tmp/multitimer-0.7.1-notes.md
 ```
 
 Release Notes 至少说明：原生 Swift 重构、数据兼容、菜单栏可靠性、原生 UI、CLI/URL、通知/更新、最低系统版本和未公证提示。
@@ -235,7 +235,7 @@ Release Notes 至少说明：原生 Swift 重构、数据兼容、菜单栏可�
 
 `Casks/multi-timer.rb` 必须：
 
-- [ ] `version "0.7.0"`。
+- [ ] `version "0.7.1"`。
 - [ ] `sha256` 使用公开 DMG 的真实值。
 - [ ] URL 指向 `v#{version}/MultiTimer-#{version}.dmg`。
 - [ ] 保留 `app "MultiTimer.app"`。
@@ -250,7 +250,7 @@ binary "#{appdir}/MultiTimer.app/Contents/Resources/bin/multitimer", target: "mu
 ```bash
 brew style Casks/multi-timer.rb
 git add Casks/multi-timer.rb README.md
-git commit -m "chore: update multi-timer to 0.7.0"
+git commit -m "chore: update multi-timer to 0.7.1"
 git push origin main
 
 brew update
@@ -267,6 +267,6 @@ brew fetch --cask --force echoforger/tap/multi-timer
 - [ ] DMG 与 SHA-256 公开且可下载。
 - [ ] 主仓库提交推送，GitHub Release 已发布。
 - [ ] Homebrew cask 推送并通过下载校验。
-- [ ] GitHub Pages 已显示 0.7.0 的原生截图和正确安装方式。
+- [ ] GitHub Pages 已显示 0.7.1 的原生截图和正确安装方式。
 - [ ] 未留下预览实例或测试状态干扰用户。
 - [ ] 最终回复包含版本、提交、Release、官网、Homebrew 和验证结果。

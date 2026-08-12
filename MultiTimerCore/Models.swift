@@ -159,23 +159,26 @@ public struct StateDocument: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var timers: [TimerRecord]
     public var settings: AppSettings
+    public var pomodoro: PomodoroSnapshot
     public var skippedUpdate: String?
 
     public init(
-        schemaVersion: Int = 3,
+        schemaVersion: Int = 5,
         timers: [TimerRecord] = [],
         settings: AppSettings = AppSettings(),
+        pomodoro: PomodoroSnapshot = PomodoroSnapshot(),
         skippedUpdate: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.timers = timers
         self.settings = settings
+        self.pomodoro = pomodoro
         self.skippedUpdate = skippedUpdate
     }
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
-        case timers, settings
+        case timers, settings, pomodoro
         case skippedUpdate = "skipped_update"
     }
 
@@ -184,8 +187,9 @@ public struct StateDocument: Codable, Equatable, Sendable {
         schemaVersion = (try? values.decode(Int.self, forKey: .schemaVersion)) ?? 1
         timers = (try? values.decode([TimerRecord].self, forKey: .timers)) ?? []
         settings = (try? values.decode(AppSettings.self, forKey: .settings)) ?? AppSettings()
+        pomodoro = (try? values.decode(PomodoroSnapshot.self, forKey: .pomodoro)) ?? PomodoroSnapshot()
         skippedUpdate = try? values.decodeIfPresent(String.self, forKey: .skippedUpdate)
-        schemaVersion = 3
+        schemaVersion = 5
     }
 }
 
@@ -193,25 +197,90 @@ public enum PomodoroPhase: String, Codable, Sendable {
     case idle, ready, work, rest
 }
 
-public struct PomodoroSnapshot: Sendable {
+public struct PomodoroSnapshot: Codable, Equatable, Sendable {
     public var phase: PomodoroPhase = .idle
     public var finishAt: TimeInterval?
     public var pausedRemaining: TimeInterval?
+    public var focusStartedAt: TimeInterval?
 
     public init() {}
+
+    enum CodingKeys: String, CodingKey {
+        case phase
+        case finishAt = "finish_at"
+        case pausedRemaining = "paused_remaining"
+        case focusStartedAt = "focus_started_at"
+    }
+}
+
+public struct FocusSession: Identifiable, Codable, Equatable, Sendable {
+    public var startedAt: TimeInterval
+    public var endedAt: TimeInterval?
+    public var completed: Bool
+
+    public var id: String { "\(startedAt)-\(endedAt ?? 0)" }
+
+    public init(
+        startedAt: TimeInterval,
+        endedAt: TimeInterval? = nil,
+        completed: Bool = false
+    ) {
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.completed = completed
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case completed, intervals
+        case startedAt = "started_at"
+        case endedAt = "ended_at"
+    }
+
+    private struct LegacyInterval: Codable {
+        var start: TimeInterval
+        var end: TimeInterval?
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        completed = (try? values.decode(Bool.self, forKey: .completed)) ?? false
+        let intervals = (try? values.decode([LegacyInterval].self, forKey: .intervals)) ?? []
+        startedAt = (try? values.decode(TimeInterval.self, forKey: .startedAt))
+            ?? intervals.first?.start
+            ?? 0
+        endedAt = (try? values.decodeIfPresent(TimeInterval.self, forKey: .endedAt))
+            ?? intervals.compactMap(\.end).max()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(startedAt, forKey: .startedAt)
+        try values.encodeIfPresent(endedAt, forKey: .endedAt)
+        try values.encode(completed, forKey: .completed)
+    }
 }
 
 public struct PomodoroStats: Codable, Equatable, Sendable {
-    public var days: [String: Int]
+    public var sessions: [FocusSession]
     public var syncRevision: TimeInterval
 
-    public init(days: [String: Int] = [:], syncRevision: TimeInterval = 0) {
-        self.days = days
+    public init(
+        sessions: [FocusSession] = [],
+        syncRevision: TimeInterval = 0
+    ) {
+        self.sessions = sessions
         self.syncRevision = syncRevision
     }
 
     enum CodingKeys: String, CodingKey {
-        case days
+        case sessions
         case syncRevision = "sync_revision"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        sessions = ((try? values.decode([FocusSession].self, forKey: .sessions)) ?? [])
+            .filter { $0.endedAt != nil }
+        syncRevision = (try? values.decode(TimeInterval.self, forKey: .syncRevision)) ?? 0
     }
 }

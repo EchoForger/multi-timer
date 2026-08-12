@@ -25,7 +25,7 @@ struct MultiTimerApp: App {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     static weak var shared: AppDelegate?
 
     private let model = AppModel.shared
@@ -36,6 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let popover = NSPopover()
     private var auxiliaryWindows: [NSWindowController] = []
     private var controlServer: LocalControlServer?
+    private var focusObservers: [NSObjectProtocol] = []
+    private var localMouseMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.shared = self
@@ -44,12 +46,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.setActivationPolicy(.accessory)
         configureStatusItem()
+        configureFocusDismissal()
         configureCallbacks()
         configureURLHandling()
         configureShortcut()
         configureControlServer()
         notifications.configure(model: model)
         cloudSync.configure(model: model)
+
+        WindowRouter.shared.page = .timers
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.showPopover()
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             self?.refreshStatusItem()
@@ -67,6 +75,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 model.startStopwatch(label: "Deep work")
             }
             model.updateSettings { $0.showRemaining = true; $0.showCount = true }
+            switch ProcessInfo.processInfo.environment["MULTITIMER_PREVIEW_PAGE"] {
+            case "statistics":
+                if model.pomodoro.phase == .idle { model.startPomodoro() }
+                WindowRouter.shared.page = .statistics
+            case "settings": WindowRouter.shared.page = .settings
+            default: break
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
                 self?.showPopover()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.writePreviewSnapshotIfRequested() }
@@ -76,16 +91,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         controlServer?.stop()
+        focusObservers.forEach(NotificationCenter.default.removeObserver)
+        focusObservers.removeAll()
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+            self.localMouseMonitor = nil
+        }
+    }
+
+    func popoverWillClose(_ notification: Notification) {
+        popover.contentViewController?.view.window?.makeFirstResponder(nil)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        WindowRouter.shared.page = .timers
     }
 
     private func configureStatusItem() {
-        let root = PopoverView(model: model)
+        let root = PopoverView(model: model) { [weak self] height in
+            self?.updatePopoverHeight(height)
+        }
             .environmentObject(WindowRouter.shared)
             .preferredColorScheme(previewColorScheme)
         popover.behavior = .transient
         popover.animates = true
-        popover.contentSize = NSSize(width: 360, height: 640)
-        popover.contentViewController = NSHostingController(rootView: root)
+        popover.delegate = self
+        popover.contentSize = NSSize(width: 360, height: 520)
+        let hostingController = NSHostingController(rootView: root)
+        hostingController.view.wantsLayer = true
+        hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
+        popover.contentViewController = hostingController
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = statusItem?.button else { return }
@@ -97,6 +132,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.action = #selector(togglePopover(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         refreshStatusItem()
+    }
+
+    private func configureFocusDismissal() {
+        let center = NotificationCenter.default
+        focusObservers.append(center.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                guard let self,
+                      self.popover.isShown,
+                      let popoverWindow = self.popover.contentViewController?.view.window,
+                      notification.object as? NSWindow === popoverWindow else { return }
+                DispatchQueue.main.async { [weak self, weak popoverWindow] in
+                    guard let self,
+                          popoverWindow?.isKeyWindow == false,
+                          !self.hasActivePopoverDialog else { return }
+                    self.closePopover()
+                }
+            }
+        })
+
+        focusObservers.append(center.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.closePopover() }
+        })
+
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] event in
+            guard let self, self.popover.isShown else { return event }
+            let statusWindow = self.statusItem?.button?.window
+            if event.window !== statusWindow,
+               !self.isPopoverInteractionWindow(event.window),
+               !self.hasActivePopoverDialog {
+                self.closePopover()
+            }
+            return event
+        }
+    }
+
+    private var hasActivePopoverDialog: Bool {
+        guard popover.isShown,
+              let popoverWindow = popover.contentViewController?.view.window else { return false }
+        if popoverWindow.attachedSheet != nil { return true }
+        if isPopoverInteractionWindow(NSApp.keyWindow) { return true }
+        if let modalWindow = NSApp.modalWindow,
+           modalWindow !== popoverWindow {
+            return true
+        }
+        return false
+    }
+
+    private func isPopoverInteractionWindow(_ window: NSWindow?) -> Bool {
+        guard let window,
+              let popoverWindow = popover.contentViewController?.view.window else { return false }
+        if window === popoverWindow { return true }
+        if window.sheetParent === popoverWindow || popoverWindow.attachedSheet === window { return true }
+        if window.parent === popoverWindow { return true }
+        return popoverWindow.childWindows?.contains(where: { $0 === window }) == true
     }
 
     private var previewColorScheme: ColorScheme? {
@@ -146,13 +245,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if popover.isShown {
             popover.performClose(sender)
-        } else { showPopover() }
+        } else {
+            WindowRouter.shared.page = .timers
+            showPopover()
+        }
     }
 
-    private func showPopover() {
+    func showPopover() {
         guard let button = statusItem?.button else { return }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+    }
+
+    private func closePopover() {
+        guard popover.isShown else { return }
+        popover.contentViewController?.view.window?.makeFirstResponder(nil)
+        popover.performClose(nil)
+    }
+
+    private func updatePopoverHeight(_ height: CGFloat) {
+        let size = NSSize(width: 360, height: height)
+        guard popover.contentSize != size else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            popover.contentSize = size
+        }
     }
 
     private func writePreviewSnapshotIfRequested() {
@@ -167,7 +284,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showContextMenu() {
         let menu = NSMenu()
-        menu.addItem(withTitle: NSLocalizedString("New 5 Minute Timer", comment: "Status menu"), action: #selector(startQuickTimer), keyEquivalent: "")
         menu.addItem(withTitle: NSLocalizedString("Start / Pause Pomodoro", comment: "Status menu"), action: #selector(togglePomodoro), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: NSLocalizedString("Statistics", comment: "Status menu"), action: #selector(showStatisticsAction), keyEquivalent: "")
@@ -180,7 +296,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = nil
     }
 
-    @objc private func startQuickTimer() { model.startCountdown(label: "Timer", seconds: 300) }
     @objc private func togglePomodoro() {
         if model.pomodoro.phase == .work || model.pomodoro.phase == .rest { model.togglePomodoroPause() }
         else { model.startPomodoro() }
@@ -191,19 +306,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func refreshStatusItem() {
         guard let button = statusItem?.button else { return }
-        let symbol: String
+        let image: NSImage?
         switch model.pomodoro.phase {
-        case .work: symbol = "flame.fill"
-        case .rest: symbol = "cup.and.saucer.fill"
-        default: symbol = model.timers.contains(where: { $0.finished }) ? "timer.circle.fill" : "timer"
+        case .work:
+            image = coloredStatusImage(
+                symbol: "flame.fill",
+                text: TimeFormat.menuBar(model.pomodoroRemaining),
+                background: .systemRed
+            )
+        case .rest:
+            image = coloredStatusImage(
+                symbol: "cup.and.saucer.fill",
+                text: TimeFormat.menuBar(model.pomodoroRemaining),
+                background: .systemGreen
+            )
+        default:
+            image = NSImage(
+                systemSymbolName: model.timers.contains(where: { $0.finished }) ? "timer.circle.fill" : "timer",
+                accessibilityDescription: "MultiTimer"
+            )
+            image?.isTemplate = true
         }
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "MultiTimer")
-        image?.isTemplate = true
         button.image = image
         var parts: [String] = []
-        if model.pomodoro.phase == .work || model.pomodoro.phase == .rest {
-            parts.append(TimeFormat.menuBar(model.pomodoroRemaining))
-        } else if model.settings.showRemaining, let remaining = model.nearestRemaining {
+        if model.settings.showRemaining, let remaining = model.nearestRemaining {
             parts.append(TimeFormat.menuBar(remaining))
         }
         if model.settings.showCount, model.activeCount > 0 { parts.append("\(model.activeCount)") }
@@ -213,6 +339,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)]
         )
         button.toolTip = "MultiTimer"
+    }
+
+    private func coloredStatusImage(symbol: String, text: String, background: NSColor) -> NSImage? {
+        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+        guard let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: "MultiTimer")?
+            .withSymbolConfiguration(symbolConfiguration) else { return nil }
+
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+        let textAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white,
+        ]
+        let textSize = (text as NSString).size(withAttributes: textAttributes)
+        let horizontalPadding: CGFloat = 6
+        let spacing: CGFloat = 4
+        let size = NSSize(
+            width: horizontalPadding * 2 + symbolImage.size.width + spacing + ceil(textSize.width),
+            height: 18
+        )
+        let image = NSImage(size: size, flipped: false) { bounds in
+            background.setFill()
+            NSBezierPath(
+                roundedRect: bounds.insetBy(dx: 1, dy: 1),
+                xRadius: 5,
+                yRadius: 5
+            ).fill()
+
+            let origin = NSPoint(
+                x: horizontalPadding,
+                y: bounds.midY - symbolImage.size.height / 2
+            )
+            symbolImage.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
+            let textOrigin = NSPoint(
+                x: origin.x + symbolImage.size.width + spacing,
+                y: bounds.midY - textSize.height / 2
+            )
+            (text as NSString).draw(at: textOrigin, withAttributes: textAttributes)
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = "MultiTimer"
+        return image
     }
 
     @objc private func handleGetURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
@@ -226,7 +395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let host = url.host?.lowercased() ?? ""
         let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
         let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        let name = query.first(where: { $0.name == "name" })?.value ?? "Timer"
+        let name = query.first(where: { $0.name == "name" })?.value ?? ""
         if host == "start" {
             if query.first(where: { $0.name == "stopwatch" })?.value == "1" {
                 model.startStopwatch(label: name)
@@ -251,10 +420,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handle(_ command: ControlCommand) -> ControlResponse {
         switch command.action {
         case "start":
-            model.startCountdown(label: command.name ?? "Timer", seconds: command.seconds ?? 60)
+            model.startCountdown(label: command.name ?? "", seconds: command.seconds ?? 60)
             return ControlResponse(ok: true, message: "Timer started")
         case "stopwatch":
-            model.startStopwatch(label: command.name ?? "Stopwatch")
+            model.startStopwatch(label: command.name ?? "")
             return ControlResponse(ok: true, message: "Stopwatch started")
         case "list":
             let lines = model.sortedTimers.map { timer in
@@ -300,15 +469,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showStatistics() {
-        showWindow(title: NSLocalizedString("MultiTimer Statistics", comment: "Window title"), size: NSSize(width: 680, height: 520)) {
-            StatisticsView(model: model)
-        }
+        WindowRouter.shared.page = .statistics
+        if !popover.isShown { DispatchQueue.main.async { [weak self] in self?.showPopover() } }
     }
 
     func showSettings() {
-        showWindow(title: NSLocalizedString("MultiTimer Settings", comment: "Window title"), size: NSSize(width: 520, height: 470)) {
-            SettingsView(model: model)
-        }
+        WindowRouter.shared.page = .settings
+        if !popover.isShown { DispatchQueue.main.async { [weak self] in self?.showPopover() } }
     }
 
     func showPermissions() {
@@ -318,18 +485,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showAbout() {
-        let credits = NSAttributedString(string: "MultiTimer 0.7.0\n© 2026 EchoForger\nOpen source under the MIT License.")
+        let credits = NSMutableAttributedString(
+            string: "MultiTimer \(appVersion)\n© 2026 EchoForger\nOpen source under the MIT License.\nhttps://echoforger.github.io/multi-timer/"
+        )
+        let website = "https://echoforger.github.io/multi-timer/"
+        credits.addAttribute(.link, value: website, range: (credits.string as NSString).range(of: website))
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(options: [
             .applicationName: "MultiTimer",
-            .applicationVersion: "0.7.0",
-            .version: "0.7.0",
+            .applicationVersion: appVersion,
+            .version: appVersion,
             .credits: credits,
         ])
     }
 
     func checkForUpdates(interactive: Bool = true) {
-        updater.check(currentVersion: "0.7.0", skippedVersion: model.skippedUpdate) { [weak self] result in
+        updater.check(currentVersion: appVersion, skippedVersion: model.skippedUpdate) { [weak self] result in
             Task { @MainActor in
                 guard let self else { return }
                 switch result {
@@ -347,6 +518,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.7.1"
     }
 
     private func showWindow<Content: View>(title: String, size: NSSize, @ViewBuilder content: () -> Content) {
@@ -376,7 +551,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class WindowRouter: ObservableObject {
     static let shared = WindowRouter()
     weak var delegate: AppDelegate?
+    @Published var page: PopoverPage = .timers
 
+    func main() { page = .timers }
     func statistics() { delegate?.showStatistics() }
     func settings() { delegate?.showSettings() }
     func permissions() { delegate?.showPermissions() }

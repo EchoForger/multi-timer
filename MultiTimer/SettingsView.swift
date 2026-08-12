@@ -9,46 +9,45 @@ struct SettingsView: View {
     @ObservedObject private var launchAtLogin = LaunchAtLogin.observable
 
     var body: some View {
-        Form {
-            Section("Menu Bar") {
+        VStack(alignment: .leading, spacing: 14) {
+            settingSection("Menu Bar") {
                 Toggle("Show nearest remaining time", isOn: binding(\.showRemaining))
                 Toggle("Show active timer count", isOn: binding(\.showCount))
                 Toggle("Sort timers by nearest expiry", isOn: binding(\.sortByExpiry))
             }
 
-            Section("Pomodoro") {
-                durationRow("Focus duration", keyPath: \.pomodoroWorkSeconds)
-                durationRow("Break duration", keyPath: \.pomodoroBreakSeconds)
+            settingSection("Pomodoro") {
+                durationSlider("Focus duration", keyPath: \.pomodoroWorkSeconds, range: 1...120)
+                durationSlider("Break duration", keyPath: \.pomodoroBreakSeconds, range: 1...60)
                 Toggle("Automatically start the next focus", isOn: binding(\.pomodoroAutoCycle))
                 Toggle("Show Pomodoro in the menu", isOn: binding(\.showPomodoro))
             }
 
-            Section("System") {
+            settingSection("System") {
                 Toggle("Launch at login", isOn: $launchAtLogin.isEnabled)
                 Toggle("Check for updates when MultiTimer starts", isOn: binding(\.updateAutomatically))
                 LabeledContent("Permissions shortcut") {
                     KeyboardShortcuts.Recorder(for: .openPermissions)
                 }
-                HStack {
-                    Text("Language")
-                    Spacer()
-                    Button("Open Language Settings…", action: openLanguageSettings)
-                }
-                HStack {
-                    Text("Permissions")
-                    Spacer()
-                    Button("Open Permissions…") { WindowRouter.shared.permissions() }
-                }
+                actionRow("Language", button: "Open Language Settings…", action: openLanguageSettings)
+                actionRow("Permissions", button: "Open Permissions…") { WindowRouter.shared.permissions() }
             }
 
-            Section {
-                Text("Changes are saved automatically.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            Text("Changes are saved automatically.")
+                .font(.caption).foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
-        .padding(12)
-        .frame(minWidth: 500, minHeight: 430)
+        .padding(14)
+    }
+
+    private func settingSection<Content: View>(
+        _ title: LocalizedStringKey,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) { content() }
+                .padding(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } label: { Text(title).fontWeight(.semibold) }
     }
 
     private func binding(_ keyPath: WritableKeyPath<AppSettings, Bool>) -> Binding<Bool> {
@@ -58,21 +57,37 @@ struct SettingsView: View {
         )
     }
 
-    private func durationRow(_ title: String, keyPath: WritableKeyPath<AppSettings, Int>) -> some View {
+    private func durationSlider(
+        _ title: LocalizedStringKey,
+        keyPath: WritableKeyPath<AppSettings, Int>,
+        range: ClosedRange<Double>
+    ) -> some View {
+        VStack(spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(model.settings[keyPath: keyPath] / 60) min")
+                    .font(.body.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(model.settings[keyPath: keyPath] / 60) },
+                    set: { minutes in
+                        model.updateSettings { $0[keyPath: keyPath] = Int(minutes.rounded()) * 60 }
+                    }
+                ),
+                in: range,
+                step: 1
+            )
+        }
+    }
+
+    private func actionRow(_ title: LocalizedStringKey, button: LocalizedStringKey, action: @escaping () -> Void) -> some View {
         HStack {
             Text(title)
             Spacer()
-            TextField("MM:SS", text: Binding(
-                get: { TimeFormat.clock(TimeInterval(model.settings[keyPath: keyPath])).dropFirst(3).description },
-                set: { value in
-                    if let seconds = DurationParser.parse(value) {
-                        model.updateSettings { $0[keyPath: keyPath] = min(3_599, seconds) }
-                    }
-                }
-            ))
-            .multilineTextAlignment(.trailing)
-            .font(.body.monospacedDigit())
-            .frame(width: 72)
+            Button(button, action: action).controlSize(.small)
         }
     }
 

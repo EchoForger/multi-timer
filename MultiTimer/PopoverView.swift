@@ -2,57 +2,124 @@ import AppKit
 import MultiTimerCore
 import SwiftUI
 
-private enum CreationMode: String, CaseIterable, Identifiable {
-    case duration, target, stopwatch
+enum PopoverPage: Equatable {
+    case timers
+    case statistics
+    case settings
+}
+
+private enum CreationKind: String, CaseIterable, Identifiable {
+    case countdown, stopwatch
     var id: String { rawValue }
 }
 
 struct PopoverView: View {
     @ObservedObject var model: AppModel
     @EnvironmentObject private var router: WindowRouter
+    let onPreferredHeight: (CGFloat) -> Void
+
     @State private var name = ""
-    @State private var durationText = "5"
-    @State private var targetText = ""
-    @State private var mode: CreationMode = .duration
+    @State private var kind: CreationKind = .countdown
     @State private var sliderPosition = pow(300.0 / 86_400.0, 1.0 / 3.0)
 
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ScrollView {
-                VStack(spacing: 10) {
-                    creationCard
-                    if model.settings.showPomodoro { PomodoroView(model: model) }
-                    timerList
-                }
-                .padding(12)
-            }
-            Divider()
-            footer
+    init(model: AppModel, onPreferredHeight: @escaping (CGFloat) -> Void = { _ in }) {
+        self.model = model
+        self.onPreferredHeight = onPreferredHeight
+    }
+
+    private var durationSeconds: Int {
+        max(1, Int((86_400 * pow(sliderPosition, 3)).rounded()))
+    }
+
+    private var preferredHeight: CGFloat {
+        switch router.page {
+        case .settings: return 620
+        case .statistics: return 520
+        case .timers:
+            let creation: CGFloat = kind == .countdown ? 166 : 105
+            let pomodoro: CGFloat = model.settings.showPomodoro ? 80 : 0
+            let timers: CGFloat = model.sortedTimers.isEmpty
+                ? 80
+                : 26 + CGFloat(min(model.sortedTimers.count, 4)) * 66
+            return min(680, max(390, 139 + creation + pomodoro + timers))
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .frame(width: 360, height: 640)
+    }
+
+    var body: some View {
+        ZStack {
+            PopoverVisualEffect()
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                header
+                Divider()
+                Group {
+                    switch router.page {
+                    case .timers: timerPage
+                    case .statistics: ScrollView { StatisticsView(model: model) }
+                    case .settings: ScrollView { SettingsView(model: model) }
+                    }
+                }
+                .id(router.page)
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                Divider()
+                footer
+            }
+        }
+        .frame(width: 360, height: preferredHeight)
+        .animation(.easeInOut(duration: 0.22), value: router.page)
+        .animation(.easeInOut(duration: 0.22), value: model.sortedTimers.count)
+        .animation(.easeInOut(duration: 0.18), value: kind)
+        .onAppear { onPreferredHeight(preferredHeight) }
+        .onChange(of: preferredHeight) { onPreferredHeight($0) }
     }
 
     private var header: some View {
         HStack(spacing: 9) {
-            Image(systemName: "timer")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.tint)
+            if router.page == .timers {
+                Image(systemName: "timer")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.tint)
+            } else {
+                Button { router.main() } label: { Image(systemName: "chevron.left") }
+                    .buttonStyle(.borderless)
+            }
             VStack(alignment: .leading, spacing: 1) {
-                Text("MultiTimer").font(.headline)
-                Text(model.activeCount == 0 ? "Ready when you are" : "\(model.activeCount) active")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(headerTitle).font(.headline)
+                if router.page == .timers {
+                    Text(model.activeCount == 0 ? "Ready when you are" : "\(model.activeCount) active")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
             Spacer()
-            Button { router.statistics() } label: { Image(systemName: "chart.bar.xaxis") }
-                .buttonStyle(.borderless).help("Statistics")
-            Button { router.settings() } label: { Image(systemName: "gearshape") }
-                .buttonStyle(.borderless).help("Settings")
+            if router.page == .timers {
+                Button { router.settings() } label: { Image(systemName: "gearshape") }
+                    .buttonStyle(.borderless).help("Settings")
+            }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .frame(height: 55)
+    }
+
+    private var headerTitle: LocalizedStringKey {
+        switch router.page {
+        case .timers: return "MultiTimer"
+        case .statistics: return "Focus Statistics"
+        case .settings: return "Settings"
+        }
+    }
+
+    private var timerPage: some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                creationCard
+                if model.settings.showPomodoro {
+                    PomodoroView(model: model) { router.statistics() }
+                }
+                timerList
+            }
+            .padding(12)
+        }
     }
 
     private var creationCard: some View {
@@ -60,45 +127,44 @@ struct PopoverView: View {
             VStack(spacing: 8) {
                 TextField("Name this timer", text: $name)
                     .textFieldStyle(.roundedBorder)
-                Picker("", selection: $mode) {
-                    Text("Duration").tag(CreationMode.duration)
-                    Text("At Time").tag(CreationMode.target)
-                    Text("Stopwatch").tag(CreationMode.stopwatch)
+                    .onSubmit(start)
+                Picker("", selection: $kind) {
+                    Text("Countdown").tag(CreationKind.countdown)
+                    Text("Stopwatch").tag(CreationKind.stopwatch)
                 }
-                .labelsHidden().pickerStyle(.segmented)
+                .labelsHidden()
+                .pickerStyle(.segmented)
 
-                switch mode {
-                case .duration:
-                    HStack(spacing: 7) {
-                        TextField("Minutes or HH:MM:SS", text: $durationText)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit(start)
-                        Button("Start", action: start).keyboardShortcut(.defaultAction)
+                if kind == .countdown {
+                    HStack {
+                        Text(TimeFormat.clock(TimeInterval(durationSeconds)))
+                            .font(.body.monospacedDigit().weight(.medium))
+                        Spacer()
+                        Text("Alarm \(alarmTime)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
                     Slider(value: $sliderPosition, in: 0.01...1) { Text("Duration") }
-                        .onChange(of: sliderPosition) { value in
-                            let seconds = max(60, Int((86_400 * pow(value, 3) / 60).rounded()) * 60)
-                            durationText = seconds % 60 == 0 ? String(seconds / 60) : TimeFormat.clock(TimeInterval(seconds))
-                        }
-                    HStack(spacing: 6) {
-                        ForEach([60, 300, 600, 900, 1800], id: \.self) { seconds in
-                            Button("\(seconds / 60)m") { quickStart(seconds) }
-                                .controlSize(.small).frame(maxWidth: .infinity)
-                        }
+                    Button(action: start) {
+                        Text("Start Countdown")
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
                     }
-                case .target:
-                    HStack(spacing: 7) {
-                        TextField("HH:MM or HH:MM:SS", text: $targetText)
-                            .textFieldStyle(.roundedBorder).onSubmit(start)
-                        Button("Start", action: start).keyboardShortcut(.defaultAction)
-                    }
-                case .stopwatch:
+                        .buttonStyle(.borderedProminent)
+                } else {
                     Button("Start Stopwatch", action: start)
-                        .frame(maxWidth: .infinity).keyboardShortcut(.defaultAction)
+                        .frame(maxWidth: .infinity)
                 }
             }
             .padding(2)
         } label: { Label("New Timer", systemImage: "plus.circle") }
+    }
+
+    private var alarmTime: String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .medium
+        formatter.dateStyle = .none
+        return formatter.string(from: Date().addingTimeInterval(TimeInterval(durationSeconds)))
     }
 
     @ViewBuilder
@@ -109,7 +175,8 @@ struct PopoverView: View {
                 Text("No Timers").font(.headline)
                 Text("Use the controls above to start one.").font(.caption).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, minHeight: 120)
+            .frame(maxWidth: .infinity, minHeight: 80)
+            .transition(.opacity)
         } else {
             VStack(alignment: .leading, spacing: 7) {
                 HStack {
@@ -117,7 +184,13 @@ struct PopoverView: View {
                     Spacer()
                     Text("\(model.activeCount) active").font(.caption).foregroundStyle(.secondary)
                 }
-                ForEach(model.sortedTimers) { timer in TimerRow(model: model, timer: timer) }
+                ForEach(model.sortedTimers) { timer in
+                    TimerRow(model: model, timer: timer)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.96)),
+                            removal: .opacity.combined(with: .move(edge: .trailing))
+                        ))
+                }
             }
         }
     }
@@ -132,26 +205,31 @@ struct PopoverView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-    }
-
-    private func quickStart(_ seconds: Int) {
-        model.startCountdown(label: name, seconds: seconds)
-        name = ""
+        .frame(height: 39)
     }
 
     private func start() {
-        switch mode {
-        case .duration:
-            guard let seconds = DurationParser.parse(durationText) else { NSSound.beep(); return }
-            model.startCountdown(label: name, seconds: seconds)
-        case .target:
-            guard let date = DurationParser.targetDate(targetText) else { NSSound.beep(); return }
-            model.startCountdown(label: name, target: date)
-        case .stopwatch:
-            model.startStopwatch(label: name)
+        switch kind {
+        case .countdown: model.startCountdown(label: name, seconds: durationSeconds)
+        case .stopwatch: model.startStopwatch(label: name)
         }
         name = ""
+    }
+}
+
+private struct PopoverVisualEffect: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .popover
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = .popover
+        nsView.blendingMode = .behindWindow
+        nsView.state = .followsWindowActiveState
     }
 }
 
@@ -160,7 +238,7 @@ private struct TimerRow: View {
     let timer: TimerRecord
     @State private var editing = false
     @State private var editedName = ""
-    @State private var editedTime = ""
+    @FocusState private var nameFocused: Bool
 
     private var displayedTime: String {
         timer.kind == .countdown
@@ -169,26 +247,27 @@ private struct TimerRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 7) {
                 if timer.pinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary) }
                 if editing {
-                    TextField("Name", text: $editedName, onCommit: finishEditing)
+                    TextField("Name", text: $editedName)
                         .textFieldStyle(.roundedBorder)
+                        .focused($nameFocused)
+                        .onSubmit(finishEditing)
+                        .onChange(of: nameFocused) { focused in
+                            if !focused, editing { finishEditing() }
+                        }
                 } else {
                     Text(timer.label)
-                        .fontWeight(.medium).lineLimit(1)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
                         .overlay(PressureRenameView(action: beginEditing))
                 }
                 Spacer(minLength: 4)
                 Text(timer.finished ? "Done" : displayedTime)
                     .font(.system(.body, design: .monospaced).weight(.semibold))
                     .foregroundColor(timer.finished ? Color(nsColor: .secondaryLabelColor) : .accentColor)
-            }
-
-            if timer.kind == .countdown, !timer.finished {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
             }
 
             HStack(spacing: 6) {
@@ -199,21 +278,16 @@ private struct TimerRow: View {
                     Button(timer.isPaused ? "Resume" : "Pause") { model.togglePause(timer.id) }.controlSize(.small)
                     if timer.kind == .stopwatch {
                         Button("Lap") { model.addLap(timer.id) }.controlSize(.small)
-                    } else {
-                        TextField("HH:MM:SS", text: $editedTime)
-                            .frame(width: 82).controlSize(.small)
-                            .onSubmit(applyRemaining)
                     }
                     Spacer()
                     Menu {
                         Button(timer.pinned ? "Unpin" : "Pin") { model.togglePin(timer.id) }
                         Button("Duplicate") { model.duplicate(timer.id) }
                         Button("Rename", action: beginEditing)
-                        if timer.kind == .countdown { Button("Set Target Time…", action: editTargetTime) }
                         Divider()
                         Button("Delete", role: .destructive) { model.cancel(timer.id) }
                     } label: { Image(systemName: "ellipsis.circle") }
-                    .menuStyle(.borderlessButton).fixedSize()
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 }
             }
 
@@ -224,45 +298,30 @@ private struct TimerRow: View {
         }
         .padding(8)
         .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .contentShape(Rectangle())
         .contextMenu {
             Button(timer.isPaused ? "Resume" : "Pause") { model.togglePause(timer.id) }
             Button(timer.pinned ? "Unpin" : "Pin") { model.togglePin(timer.id) }
             Button("Duplicate") { model.duplicate(timer.id) }
             Button("Rename", action: beginEditing)
-            if timer.kind == .countdown { Button("Set Target Time…", action: editTargetTime) }
             Divider()
             Button("Delete") { model.cancel(timer.id) }
         }
-        .onAppear { editedTime = displayedTime }
-        .onChange(of: displayedTime) { value in if !editing { editedTime = value } }
+        .onDisappear {
+            if editing { finishEditing() }
+        }
     }
 
-    private var progress: Double {
-        let total = max(1, timer.originalDuration ?? 1)
-        return min(1, max(0, 1 - timer.remaining(at: model.now) / total))
+    private func beginEditing() {
+        editedName = timer.label
+        editing = true
+        DispatchQueue.main.async { nameFocused = true }
     }
 
-    private func beginEditing() { editedName = timer.label; editing = true }
-    private func finishEditing() { model.rename(timer.id, label: editedName); editing = false }
-    private func applyRemaining() {
-        guard let seconds = DurationParser.parse(editedTime) else { NSSound.beep(); return }
-        model.setRemaining(timer.id, seconds: seconds)
-    }
-
-    private func editTargetTime() {
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Set Target Time", comment: "Timer editor")
-        alert.informativeText = NSLocalizedString("Enter a time today or tomorrow in HH:MM or HH:MM:SS format.", comment: "Timer editor")
-        alert.addButton(withTitle: NSLocalizedString("Set", comment: "Timer editor"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Timer editor"))
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        field.stringValue = formatter.string(from: Date(timeIntervalSince1970: timer.endTS ?? model.now))
-        alert.accessoryView = field
-        guard alert.runModal() == .alertFirstButtonReturn,
-              let target = DurationParser.targetDate(field.stringValue) else { return }
-        model.setTarget(timer.id, target: target)
+    private func finishEditing() {
+        guard editing else { return }
+        model.rename(timer.id, label: editedName)
+        editing = false
     }
 }
 

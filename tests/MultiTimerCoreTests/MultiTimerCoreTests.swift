@@ -37,7 +37,7 @@ final class MultiTimerCoreTests: XCTestCase {
     func testLegacyStateMigration() throws {
         let data = Data(#"{"timers":[{"id":"old","label":"Tea","duration":300,"created_ts":1000,"paused":true,"paused_remaining":120}],"settings":{"show_remaining":true}}"#.utf8)
         let state = try JSONDecoder().decode(StateDocument.self, from: data)
-        XCTAssertEqual(state.schemaVersion, 3)
+        XCTAssertEqual(state.schemaVersion, 5)
         XCTAssertEqual(state.timers.first?.label, "Tea")
         XCTAssertTrue(state.timers.first?.isPaused == true)
         XCTAssertTrue(state.settings.showRemaining)
@@ -67,5 +67,58 @@ final class MultiTimerCoreTests: XCTestCase {
         let document = StateDocument(timers: [TimerRecord(label: "Work", kind: .stopwatch)])
         try store.save(document)
         XCTAssertEqual(store.load(), document)
+    }
+
+    func testActivePomodoroRoundTrip() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = StateStore(url: root.appendingPathComponent("state.json"))
+        var pomodoro = PomodoroSnapshot()
+        pomodoro.phase = .work
+        pomodoro.finishAt = 12_345
+        pomodoro.focusStartedAt = 10_845
+        let document = StateDocument(pomodoro: pomodoro)
+        try store.save(document)
+        XCTAssertEqual(store.load().pomodoro, pomodoro)
+    }
+
+    func testLegacyPomodoroStatsMigration() throws {
+        let data = Data(#"{"days":{"2026-08-12":3},"sync_revision":10}"#.utf8)
+        let stats = try JSONDecoder().decode(PomodoroStats.self, from: data)
+        XCTAssertTrue(stats.sessions.isEmpty)
+    }
+
+    func testFocusTimelineClipsIntervalsToDay() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let day = Date(timeIntervalSince1970: 86_400)
+        let session = FocusSession(
+            startedAt: 86_300,
+            endedAt: 90_000,
+            completed: true
+        )
+        let stats = PomodoroStats(sessions: [session])
+        let store = StatsStore()
+        XCTAssertEqual(store.sessions(in: day, from: stats, calendar: calendar).count, 1)
+        XCTAssertEqual(store.focusedSeconds(in: day, from: stats, calendar: calendar), 3_600)
+    }
+
+    func testLegacyIntervalSessionMigration() throws {
+        let data = Data(#"{"sessions":[{"id":"old","started_at":100,"completed":true,"intervals":[{"start":100,"end":200},{"start":250,"end":400}]}]}"#.utf8)
+        let stats = try JSONDecoder().decode(PomodoroStats.self, from: data)
+        XCTAssertEqual(stats.sessions.first?.startedAt, 100)
+        XCTAssertEqual(stats.sessions.first?.endedAt, 400)
+        XCTAssertTrue(stats.sessions.first?.completed == true)
+    }
+
+    func testStatsJSONStoresOnlySessionsAndDerivedFields() throws {
+        let stats = PomodoroStats(
+            sessions: [FocusSession(startedAt: 100, endedAt: 200, completed: true)],
+            syncRevision: 300
+        )
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(stats)) as? [String: Any])
+        XCTAssertNil(object["days"])
+        let sessions = try XCTUnwrap(object["sessions"] as? [[String: Any]])
+        XCTAssertEqual(Set(sessions[0].keys), ["started_at", "ended_at", "completed"])
     }
 }

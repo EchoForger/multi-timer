@@ -21,6 +21,12 @@
 "Use the controls above to start one." = "Use the controls above to start one.";
 "Timers" = "Timers";
 "About" = "About";
+"About MultiTimer" = "About MultiTimer";
+"by EchoForger" = "by EchoForger";
+"Version %@ (%@)" = "Version %@ (%@)";
+"Website" = "Website";
+"Copy version" = "Copy version";
+"Open source under the MIT License · © 2026 EchoForger" = "Open source under the MIT License · © 2026 EchoForger";
 "Check for Updates" = "Check for Updates";
 "Quit" = "Quit";
 "Done" = "Done";
@@ -38,7 +44,6 @@
 "+5 min" = "+5 min";
 "Skip" = "Skip";
 "Stop" = "Stop";
-"Start Next Focus" = "Start Next Focus";
 "Start Focus" = "Start Focus";
 "Ready to focus" = "Ready to focus";
 "Break complete" = "Break complete";

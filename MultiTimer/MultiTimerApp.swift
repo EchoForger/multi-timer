@@ -306,39 +306,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func refreshStatusItem() {
         guard let button = statusItem?.button else { return }
-        let image: NSImage?
+        let parts = statusParts()
         switch model.pomodoro.phase {
         case .work:
-            image = coloredStatusImage(
+            button.image = coloredStatusImage(
                 symbol: "flame.fill",
                 text: TimeFormat.menuBar(model.pomodoroRemaining),
                 background: .systemRed
             )
+            setTrailingTitle(button, parts: parts)
         case .rest:
-            image = coloredStatusImage(
+            button.image = coloredStatusImage(
                 symbol: "cup.and.saucer.fill",
                 text: TimeFormat.menuBar(model.pomodoroRemaining),
                 background: .systemGreen
             )
+            setTrailingTitle(button, parts: parts)
         default:
-            image = NSImage(
-                systemSymbolName: model.timers.contains(where: { $0.finished }) ? "timer.circle.fill" : "timer",
-                accessibilityDescription: "MultiTimer"
-            )
-            image?.isTemplate = true
+            let symbol = model.timers.contains(where: { $0.finished }) ? "timer.circle.fill" : "timer"
+            if parts.isEmpty {
+                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "MultiTimer")
+                image?.isTemplate = true
+                button.image = image
+            } else {
+                button.image = templateStatusImage(symbol: symbol, text: parts.joined(separator: " · "))
+            }
+            button.attributedTitle = NSAttributedString(string: "")
         }
-        button.image = image
+        button.toolTip = "MultiTimer"
+    }
+
+    private func statusParts() -> [String] {
         var parts: [String] = []
         if model.settings.showRemaining, let remaining = model.nearestRemaining {
             parts.append(TimeFormat.menuBar(remaining))
         }
         if model.settings.showCount, model.activeCount > 0 { parts.append("\(model.activeCount)") }
+        return parts
+    }
+
+    private func setTrailingTitle(_ button: NSStatusBarButton, parts: [String]) {
         let title = parts.isEmpty ? "" : " " + parts.joined(separator: " · ")
         button.attributedTitle = NSAttributedString(
             string: title,
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)]
         )
-        button.toolTip = "MultiTimer"
     }
 
     private func coloredStatusImage(symbol: String, text: String, background: NSColor) -> NSImage? {
@@ -380,6 +392,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return true
         }
         image.isTemplate = false
+        image.accessibilityDescription = "MultiTimer"
+        return image
+    }
+
+    private func templateStatusImage(symbol: String, text: String) -> NSImage? {
+        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        guard let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: "MultiTimer")?
+            .withSymbolConfiguration(symbolConfiguration) else { return nil }
+
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let textAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.black,
+        ]
+        let textSize = (text as NSString).size(withAttributes: textAttributes)
+        let spacing: CGFloat = 3
+        let size = NSSize(
+            width: symbolImage.size.width + spacing + ceil(textSize.width),
+            height: 18
+        )
+        let image = NSImage(size: size, flipped: false) { bounds in
+            let symbolOrigin = NSPoint(x: 0, y: bounds.midY - symbolImage.size.height / 2)
+            symbolImage.draw(at: symbolOrigin, from: .zero, operation: .sourceOver, fraction: 1)
+            let textOrigin = NSPoint(
+                x: symbolImage.size.width + spacing,
+                y: bounds.midY - textSize.height / 2
+            )
+            (text as NSString).draw(at: textOrigin, withAttributes: textAttributes)
+            return true
+        }
+        image.isTemplate = true
         image.accessibilityDescription = "MultiTimer"
         return image
     }
@@ -485,18 +528,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func showAbout() {
-        let credits = NSMutableAttributedString(
-            string: "MultiTimer \(appVersion)\n© 2026 EchoForger\nOpen source under the MIT License.\nhttps://echoforger.github.io/multi-timer/"
-        )
-        let website = "https://echoforger.github.io/multi-timer/"
-        credits.addAttribute(.link, value: website, range: (credits.string as NSString).range(of: website))
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationName: "MultiTimer",
-            .applicationVersion: appVersion,
-            .version: appVersion,
-            .credits: credits,
-        ])
+        showWindow(
+            title: NSLocalizedString("About MultiTimer", comment: "Window title"),
+            size: NSSize(width: 420, height: 384),
+            resizable: false
+        ) {
+            AboutView(
+                version: appVersion,
+                build: appBuild,
+                onWebsite: { NSWorkspace.shared.open(URL(string: "https://echoforger.github.io/multi-timer/")!) },
+                onCheckUpdates: { [weak self] in self?.checkForUpdates() }
+            )
+            .preferredColorScheme(previewColorScheme)
+        }
     }
 
     func checkForUpdates(interactive: Bool = true) {
@@ -521,20 +565,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.7.1"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.7.2"
     }
 
-    private func showWindow<Content: View>(title: String, size: NSSize, @ViewBuilder content: () -> Content) {
+    private var appBuild: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+    }
+
+    private func showWindow<Content: View>(
+        title: String,
+        size: NSSize,
+        resizable: Bool = true,
+        @ViewBuilder content: () -> Content
+    ) {
         popover.performClose(nil)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        var style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
+        if resizable { style.insert(.resizable) }
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: style,
             backing: .buffered,
             defer: false
         )
         window.title = title
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
         window.center()
         window.isReleasedWhenClosed = false
         window.contentViewController = NSHostingController(rootView: content())

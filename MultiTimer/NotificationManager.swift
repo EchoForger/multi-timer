@@ -11,10 +11,14 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         center.delegate = self
         let extend = UNNotificationAction(identifier: "extend-five", title: "+5 minutes")
         let skip = UNNotificationAction(identifier: "skip-rest", title: "Skip break")
+        let startFocus = UNNotificationAction(
+            identifier: "start-focus",
+            title: NSLocalizedString("Start Focus", comment: "Notification")
+        )
         center.setNotificationCategories([
             UNNotificationCategory(identifier: "timer-finished", actions: [extend], intentIdentifiers: []),
             UNNotificationCategory(identifier: "work-finished", actions: [extend, skip], intentIdentifiers: []),
-            UNNotificationCategory(identifier: "rest-finished", actions: [extend], intentIdentifiers: []),
+            UNNotificationCategory(identifier: "rest-finished", actions: [startFocus], intentIdentifiers: []),
         ])
         requestAuthorization(completion: {})
     }
@@ -87,6 +91,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                     model.extendPomodoro()
                 }
             case "skip-rest": model.skipPomodoro()
+            case "start-focus": model.startPomodoro()
             default: break
             }
             completionHandler()

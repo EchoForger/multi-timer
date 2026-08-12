@@ -9,55 +9,60 @@ struct PermissionsView: View {
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                Image(systemName: "timer")
-                    .font(.system(size: 36, weight: .medium)).foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("MultiTimer Permissions").font(.title2.bold())
-                    Text("These settings keep the menu bar timer available and let it alert you on time.")
-                        .foregroundStyle(.secondary)
+        ZStack {
+            WindowVisualEffect(material: .underWindowBackground)
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 14) {
+                    Image(systemName: "timer")
+                        .font(.system(size: 36, weight: .medium)).foregroundStyle(.tint)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("MultiTimer Permissions").font(.title2.bold())
+                        Text("These settings keep the menu bar timer available and let it alert you on time.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                permissionRow(
+                    icon: "menubar.rectangle",
+                    title: "Menu Bar",
+                    detail: "Shows the timer icon so MultiTimer is always available.",
+                    status: "Available",
+                    statusColor: .green,
+                    button: "Menu Bar Settings…",
+                    action: openMenuBarSettings
+                )
+                permissionRow(
+                    icon: "bell.badge",
+                    title: "Notifications",
+                    detail: "Alerts you when a timer or Pomodoro session finishes.",
+                    status: notificationStatusText,
+                    statusColor: notificationStatus == .authorized ? .green : .orange,
+                    button: notificationStatus == .notDetermined ? "Allow…" : "Open Settings…",
+                    action: requestOrOpenNotifications
+                )
+                permissionRow(
+                    icon: "arrow.clockwise.circle",
+                    title: "Launch at Login",
+                    detail: "Starts MultiTimer after login so the menu bar timer is ready.",
+                    status: launchAtLogin.isEnabled ? "Enabled" : "Off",
+                    statusColor: launchAtLogin.isEnabled ? .green : .secondary,
+                    button: launchAtLogin.isEnabled ? "Disable" : "Enable",
+                    action: { launchAtLogin.isEnabled.toggle() }
+                )
+
+                Spacer()
+                HStack {
+                    Text("Press ⌘⇧⌥M anytime, or run `multitimer permissions` in Terminal.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Check Again", action: refresh)
+                    Button("Close") { NSApp.keyWindow?.close() }.keyboardShortcut(.cancelAction)
                 }
             }
-
-            permissionRow(
-                icon: "menubar.rectangle",
-                title: "Menu Bar",
-                detail: "Shows the timer icon so MultiTimer is always available.",
-                status: "Available",
-                statusColor: .green,
-                button: "Menu Bar Settings…",
-                action: openMenuBarSettings
-            )
-            permissionRow(
-                icon: "bell.badge",
-                title: "Notifications",
-                detail: "Alerts you when a timer or Pomodoro session finishes.",
-                status: notificationStatusText,
-                statusColor: notificationStatus == .authorized ? .green : .orange,
-                button: notificationStatus == .notDetermined ? "Allow…" : "Open Settings…",
-                action: requestOrOpenNotifications
-            )
-            permissionRow(
-                icon: "arrow.clockwise.circle",
-                title: "Launch at Login",
-                detail: "Starts MultiTimer after login so the menu bar timer is ready.",
-                status: launchAtLogin.isEnabled ? "Enabled" : "Off",
-                statusColor: launchAtLogin.isEnabled ? .green : .secondary,
-                button: launchAtLogin.isEnabled ? "Disable" : "Enable",
-                action: { launchAtLogin.isEnabled.toggle() }
-            )
-
-            Spacer()
-            HStack {
-                Text("Press ⌘⇧⌥M anytime, or run `multitimer permissions` in Terminal.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Check Again", action: refresh)
-                Button("Close") { NSApp.keyWindow?.close() }.keyboardShortcut(.cancelAction)
-            }
+            .padding(EdgeInsets(top: 34, leading: 24, bottom: 24, trailing: 24))
         }
-        .padding(24)
         .onAppear(perform: refresh)
     }
 

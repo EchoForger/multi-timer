@@ -34,7 +34,7 @@ struct PomodoroView: View {
                     }
                     .controlSize(.small)
                 } else {
-                    Button(model.pomodoro.phase == .ready ? "Start Next Focus" : "Start Focus") {
+                    Button("Start Focus") {
                         model.startPomodoro()
                     }
                     .frame(maxWidth: .infinity)

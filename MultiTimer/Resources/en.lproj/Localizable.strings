@@ -52,8 +52,8 @@
 "Break" = "Break";
 "Break paused" = "Break paused";
 "Menu Bar" = "Menu Bar";
-"Show nearest remaining time" = "Show nearest remaining time";
-"Show active timer count" = "Show active timer count";
+"Show countdown time" = "Show countdown time";
+"Show stopwatch time" = "Show stopwatch time";
 "Sort timers by nearest expiry" = "Sort timers by nearest expiry";
 "Focus duration" = "Focus duration";
 "Break duration" = "Break duration";

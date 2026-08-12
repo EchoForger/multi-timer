@@ -52,8 +52,8 @@
 "Break" = "休息中";
 "Break paused" = "休息已暂停";
 "Menu Bar" = "菜单栏";
-"Show nearest remaining time" = "显示最近剩余时间";
-"Show active timer count" = "显示运行数量";
+"Show countdown time" = "显示倒计时时间";
+"Show stopwatch time" = "显示秒表时间";
 "Sort timers by nearest expiry" = "按最近到期时间排序";
 "Focus duration" = "专注时长";
 "Break duration" = "休息时长";

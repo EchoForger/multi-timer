@@ -11,8 +11,8 @@ struct SettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             settingSection("Menu Bar") {
-                Toggle("Show nearest remaining time", isOn: binding(\.showRemaining))
-                Toggle("Show active timer count", isOn: binding(\.showCount))
+                Toggle("Show countdown time", isOn: binding(\.showRemaining))
+                Toggle("Show stopwatch time", isOn: binding(\.showCount))
                 Toggle("Sort timers by nearest expiry", isOn: binding(\.sortByExpiry))
             }
 

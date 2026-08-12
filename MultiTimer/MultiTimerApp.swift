@@ -306,123 +306,125 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func refreshStatusItem() {
         guard let button = statusItem?.button else { return }
-        let parts = statusParts()
-        switch model.pomodoro.phase {
-        case .work:
-            button.image = coloredStatusImage(
-                symbol: "flame.fill",
-                text: TimeFormat.menuBar(model.pomodoroRemaining),
-                background: .systemRed
-            )
-            setTrailingTitle(button, parts: parts)
-        case .rest:
-            button.image = coloredStatusImage(
-                symbol: "cup.and.saucer.fill",
-                text: TimeFormat.menuBar(model.pomodoroRemaining),
-                background: .systemGreen
-            )
-            setTrailingTitle(button, parts: parts)
-        default:
+        button.attributedTitle = NSAttributedString(string: "")
+        let modules = statusModules()
+        if modules.isEmpty {
             let symbol = model.timers.contains(where: { $0.finished }) ? "timer.circle.fill" : "timer"
-            if parts.isEmpty {
-                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "MultiTimer")
-                image?.isTemplate = true
-                button.image = image
-            } else {
-                button.image = templateStatusImage(symbol: symbol, text: parts.joined(separator: " · "))
-            }
-            button.attributedTitle = NSAttributedString(string: "")
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "MultiTimer")
+            image?.isTemplate = true
+            button.image = image
+        } else {
+            button.image = composeStatusImage(modules: modules)
         }
         button.toolTip = "MultiTimer"
     }
 
-    private func statusParts() -> [String] {
-        var parts: [String] = []
-        if model.settings.showRemaining, let remaining = model.nearestRemaining {
-            parts.append(TimeFormat.menuBar(remaining))
+    private struct StatusModule {
+        let symbol: String
+        let text: String
+        /// Capsule fill color, or `nil` for a transparent module.
+        let fill: NSColor?
+    }
+
+    private func statusModules() -> [StatusModule] {
+        var modules: [StatusModule] = []
+        switch model.pomodoro.phase {
+        case .work:
+            modules.append(StatusModule(
+                symbol: "flame.fill",
+                text: TimeFormat.menuBar(model.pomodoroRemaining),
+                fill: .systemRed
+            ))
+        case .rest:
+            modules.append(StatusModule(
+                symbol: "cup.and.saucer.fill",
+                text: TimeFormat.menuBar(model.pomodoroRemaining),
+                fill: .systemGreen
+            ))
+        default:
+            break
         }
-        if model.settings.showCount, model.activeCount > 0 { parts.append("\(model.activeCount)") }
-        return parts
+        if model.settings.showRemaining, let remaining = model.nearestRemaining {
+            modules.append(StatusModule(symbol: "timer", text: TimeFormat.menuBar(remaining), fill: nil))
+        }
+        if model.settings.showCount, let elapsed = model.nearestStopwatchElapsed {
+            modules.append(StatusModule(symbol: "stopwatch.fill", text: TimeFormat.menuBar(elapsed), fill: nil))
+        }
+        return modules
     }
 
-    private func setTrailingTitle(_ button: NSStatusBarButton, parts: [String]) {
-        let title = parts.isEmpty ? "" : " " + parts.joined(separator: " · ")
-        button.attributedTitle = NSAttributedString(
-            string: title,
-            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)]
-        )
-    }
-
-    private func coloredStatusImage(symbol: String, text: String, background: NSColor) -> NSImage? {
-        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
-        guard let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: "MultiTimer")?
-            .withSymbolConfiguration(symbolConfiguration) else { return nil }
-
-        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-        let textAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.white,
-        ]
-        let textSize = (text as NSString).size(withAttributes: textAttributes)
+    private func composeStatusImage(modules: [StatusModule]) -> NSImage? {
+        let height: CGFloat = 18
         let horizontalPadding: CGFloat = 6
-        let spacing: CGFloat = 4
-        let size = NSSize(
-            width: horizontalPadding * 2 + symbolImage.size.width + spacing + ceil(textSize.width),
-            height: 18
-        )
-        let image = NSImage(size: size, flipped: false) { bounds in
-            background.setFill()
-            NSBezierPath(
-                roundedRect: bounds.insetBy(dx: 1, dy: 1),
-                xRadius: 5,
-                yRadius: 5
-            ).fill()
+        let iconTextSpacing: CGFloat = 4
+        let moduleGap: CGFloat = 4
+        let cornerRadius: CGFloat = 5
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
 
-            let origin = NSPoint(
-                x: horizontalPadding,
-                y: bounds.midY - symbolImage.size.height / 2
-            )
-            symbolImage.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
-            let textOrigin = NSPoint(
-                x: origin.x + symbolImage.size.width + spacing,
-                y: bounds.midY - textSize.height / 2
-            )
-            (text as NSString).draw(at: textOrigin, withAttributes: textAttributes)
+        struct ModuleLayout {
+            let module: StatusModule
+            let baseSymbol: NSImage
+            let symbolSize: NSSize
+            let textWidth: CGFloat
+            let width: CGFloat
+            let originX: CGFloat
+        }
+
+        var layouts: [ModuleLayout] = []
+        var cursor: CGFloat = 0
+        for module in modules {
+            guard let baseSymbol = NSImage(systemSymbolName: module.symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(symbolConfiguration) else { continue }
+            let textWidth = ceil((module.text as NSString).size(withAttributes: [.font: font]).width)
+            let width = horizontalPadding * 2 + baseSymbol.size.width + iconTextSpacing + textWidth
+            layouts.append(ModuleLayout(
+                module: module,
+                baseSymbol: baseSymbol,
+                symbolSize: baseSymbol.size,
+                textWidth: textWidth,
+                width: width,
+                originX: cursor
+            ))
+            cursor += width + moduleGap
+        }
+        guard !layouts.isEmpty else { return nil }
+        let totalWidth = cursor - moduleGap
+
+        let image = NSImage(size: NSSize(width: totalWidth, height: height), flipped: false) { _ in
+            for layout in layouts {
+                let rect = NSRect(x: layout.originX, y: 0, width: layout.width, height: height)
+                let foreground: NSColor = layout.module.fill == nil ? .labelColor : .white
+
+                if let fill = layout.module.fill {
+                    fill.setFill()
+                    NSBezierPath(
+                        roundedRect: rect.insetBy(dx: 1, dy: 1),
+                        xRadius: cornerRadius,
+                        yRadius: cornerRadius
+                    ).fill()
+                }
+
+                let symbol = layout.baseSymbol.withSymbolConfiguration(
+                    symbolConfiguration.applying(NSImage.SymbolConfiguration(paletteColors: [foreground]))
+                ) ?? layout.baseSymbol
+                let symbolOrigin = NSPoint(
+                    x: rect.minX + horizontalPadding,
+                    y: rect.midY - layout.symbolSize.height / 2
+                )
+                symbol.draw(at: symbolOrigin, from: .zero, operation: .sourceOver, fraction: 1)
+
+                let textAttributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: foreground]
+                let textSize = (layout.module.text as NSString).size(withAttributes: textAttributes)
+                let textOrigin = NSPoint(
+                    x: symbolOrigin.x + layout.symbolSize.width + iconTextSpacing,
+                    y: rect.midY - textSize.height / 2
+                )
+                (layout.module.text as NSString).draw(at: textOrigin, withAttributes: textAttributes)
+            }
             return true
         }
         image.isTemplate = false
-        image.accessibilityDescription = "MultiTimer"
-        return image
-    }
-
-    private func templateStatusImage(symbol: String, text: String) -> NSImage? {
-        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-        guard let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: "MultiTimer")?
-            .withSymbolConfiguration(symbolConfiguration) else { return nil }
-
-        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        let textAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.black,
-        ]
-        let textSize = (text as NSString).size(withAttributes: textAttributes)
-        let spacing: CGFloat = 3
-        let size = NSSize(
-            width: symbolImage.size.width + spacing + ceil(textSize.width),
-            height: 18
-        )
-        let image = NSImage(size: size, flipped: false) { bounds in
-            let symbolOrigin = NSPoint(x: 0, y: bounds.midY - symbolImage.size.height / 2)
-            symbolImage.draw(at: symbolOrigin, from: .zero, operation: .sourceOver, fraction: 1)
-            let textOrigin = NSPoint(
-                x: symbolImage.size.width + spacing,
-                y: bounds.midY - textSize.height / 2
-            )
-            (text as NSString).draw(at: textOrigin, withAttributes: textAttributes)
-            return true
-        }
-        image.isTemplate = true
         image.accessibilityDescription = "MultiTimer"
         return image
     }
@@ -565,7 +567,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.7.2"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.7.3"
     }
 
     private var appBuild: String {

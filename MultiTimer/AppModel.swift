@@ -75,6 +75,13 @@ final class AppModel: ObservableObject {
             .min()
     }
 
+    var nearestStopwatchElapsed: TimeInterval? {
+        timers
+            .filter { $0.kind == .stopwatch && !$0.finished }
+            .map { $0.elapsed(at: now) }
+            .max()
+    }
+
     var pomodoroRemaining: TimeInterval {
         if let paused = pomodoro.pausedRemaining { return max(0, paused) }
         guard let finishAt = pomodoro.finishAt else { return 0 }

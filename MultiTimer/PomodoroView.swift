@@ -67,6 +67,23 @@ struct PomodoroView: View {
                 .help("Statistics")
             }
         }
+        .background(panelTint.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(panelTint.opacity(isActivePhase ? 0.55 : 0), lineWidth: 1)
+        }
+    }
+
+    private var isActivePhase: Bool {
+        model.pomodoro.phase == .work || model.pomodoro.phase == .rest
+    }
+
+    private var panelTint: Color {
+        switch model.pomodoro.phase {
+        case .work: return .red
+        case .rest: return .green
+        case .idle, .ready: return .clear
+        }
     }
 
     private var phaseTitle: String {

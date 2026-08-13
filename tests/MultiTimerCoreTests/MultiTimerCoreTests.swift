@@ -52,6 +52,9 @@ final class MultiTimerCoreTests: XCTestCase {
         XCTAssertEqual(TimeFormat.clock(3_661), "01:01:01")
         XCTAssertEqual(TimeFormat.menuBar(61), "00:02")
         XCTAssertEqual(TimeFormat.menuBar(3_600), "01:00")
+        XCTAssertEqual(TimeFormat.focusDetail(8.4), "8s")
+        XCTAssertEqual(TimeFormat.focusDetail(59.8), "60s")
+        XCTAssertEqual(TimeFormat.focusDetail(60), "1m")
     }
 
     func testVersions() {

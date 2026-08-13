@@ -313,6 +313,12 @@ struct StatisticsView: View {
     }
 
     private func compactDuration(_ seconds: TimeInterval) -> String {
+        if seconds > 0, seconds < 60 {
+            return String.localizedStringWithFormat(
+                NSLocalizedString("%llds", comment: "Compact seconds"),
+                max(1, Int(seconds.rounded()))
+            )
+        }
         let minutes = Int(seconds) / 60
         if minutes >= 60 {
             return String.localizedStringWithFormat(

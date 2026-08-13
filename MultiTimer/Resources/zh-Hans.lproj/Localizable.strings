@@ -169,3 +169,4 @@
 "%@ min" = "%@ 分钟";
 "%lldh %02lldm" = "%lld 小时 %02lld 分钟";
 "%lldm" = "%lld 分钟";
+"%llds" = "%lld 秒";

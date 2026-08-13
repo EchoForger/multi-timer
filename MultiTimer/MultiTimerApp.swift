@@ -394,7 +394,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let image = NSImage(size: NSSize(width: totalWidth, height: height), flipped: false) { _ in
             for layout in layouts {
                 let rect = NSRect(x: layout.originX, y: 0, width: layout.width, height: height)
-                let foreground: NSColor = layout.module.fill == nil ? .labelColor : .white
+                let symbolForeground: NSColor = layout.module.fill == nil ? .labelColor : .white
+                let textForeground: NSColor = .white
 
                 if let fill = layout.module.fill {
                     fill.setFill()
@@ -406,7 +407,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
 
                 let symbol = layout.baseSymbol.withSymbolConfiguration(
-                    symbolConfiguration.applying(NSImage.SymbolConfiguration(paletteColors: [foreground]))
+                    symbolConfiguration.applying(NSImage.SymbolConfiguration(paletteColors: [symbolForeground]))
                 ) ?? layout.baseSymbol
                 let symbolOrigin = NSPoint(
                     x: rect.minX + horizontalPadding,
@@ -414,7 +415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 )
                 symbol.draw(at: symbolOrigin, from: .zero, operation: .sourceOver, fraction: 1)
 
-                let textAttributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: foreground]
+                let textAttributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: textForeground]
                 let textSize = (layout.module.text as NSString).size(withAttributes: textAttributes)
                 let textOrigin = NSPoint(
                     x: symbolOrigin.x + layout.symbolSize.width + iconTextSpacing,
@@ -567,7 +568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.8.0"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.8.1"
     }
 
     private var appBuild: String {

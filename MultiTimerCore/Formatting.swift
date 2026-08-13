@@ -66,6 +66,13 @@ public enum TimeFormat {
         if seconds % 60 == 0 { return "\(seconds / 60)min" }
         return clock(TimeInterval(seconds))
     }
+
+    public static func focusDetail(_ seconds: TimeInterval) -> String {
+        if seconds > 0, seconds < 60 { return "\(max(1, Int(seconds.rounded())))s" }
+        let minutes = max(0, Int(seconds) / 60)
+        if minutes >= 60 { return String(format: "%dh %02dm", minutes / 60, minutes % 60) }
+        return "\(minutes)m"
+    }
 }
 
 public enum VersionNumber {

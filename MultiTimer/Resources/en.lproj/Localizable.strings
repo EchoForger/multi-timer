@@ -169,3 +169,4 @@
 "%@ min" = "%@ min";
 "%lldh %02lldm" = "%lldh %02lldm";
 "%lldm" = "%lldm";
+"%llds" = "%llds";

@@ -74,12 +74,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 model.startCountdown(label: "Tea", seconds: 5 * 60)
                 model.startStopwatch(label: "Deep work")
             }
+            if model.presets.isEmpty {
+                model.savePreset(TimerPreset(
+                    name: "Tea",
+                    durationSeconds: 300,
+                    color: .teal,
+                    favoriteRank: 0
+                ))
+                model.savePreset(TimerPreset(
+                    name: "Deep Focus",
+                    durationSeconds: 1_500,
+                    color: .red,
+                    sound: PresetSound(kind: .system, name: "Glass"),
+                    earlyReminderMinutes: 5,
+                    favoriteRank: 1
+                ))
+            }
             model.updateSettings { $0.showRemaining = true; $0.showCount = true }
             switch ProcessInfo.processInfo.environment["MULTITIMER_PREVIEW_PAGE"] {
             case "statistics":
                 if model.pomodoro.phase == .idle { model.startPomodoro() }
                 WindowRouter.shared.page = .statistics
             case "settings": WindowRouter.shared.page = .settings
+            case "presets": WindowRouter.shared.page = .presets
             default: break
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -211,6 +228,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.onPersistenceChanged = { [weak self] in self?.cloudSync.push() }
         model.onTimerFinished = { [weak self] timer in self?.notifications.timerFinished(timer) }
         model.onPomodoroFinished = { [weak self] phase in self?.notifications.pomodoroFinished(phase) }
+        model.onTimerScheduled = { [weak self] timer in self?.notifications.scheduleEarlyReminder(for: timer) }
+        model.onTimerRemoved = { [weak self] id in self?.notifications.removeScheduledReminders(for: id) }
         WindowRouter.shared.delegate = self
     }
 
@@ -297,7 +316,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func togglePomodoro() {
-        if model.pomodoro.phase == .work || model.pomodoro.phase == .rest { model.togglePomodoroPause() }
+        if model.pomodoro.phase == .work || model.pomodoro.phase == .rest || model.pomodoro.phase == .longRest {
+            model.togglePomodoroPause()
+        }
         else { model.startPomodoro() }
     }
     @objc private func showStatisticsAction() { showStatistics() }
@@ -338,6 +359,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         case .rest:
             modules.append(StatusModule(
                 symbol: "cup.and.saucer.fill",
+                text: TimeFormat.menuBar(model.pomodoroRemaining),
+                fill: .systemGreen
+            ))
+        case .longRest:
+            modules.append(StatusModule(
+                symbol: "bed.double.fill",
                 text: TimeFormat.menuBar(model.pomodoroRemaining),
                 fill: .systemGreen
             ))
@@ -568,7 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.8.1"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.9.0"
     }
 
     private var appBuild: String {
@@ -615,6 +642,7 @@ final class WindowRouter: ObservableObject {
     @Published var page: PopoverPage = .timers
 
     func main() { page = .timers }
+    func presets() { page = .presets }
     func statistics() { delegate?.showStatistics() }
     func settings() { delegate?.showSettings() }
     func permissions() { delegate?.showPermissions() }

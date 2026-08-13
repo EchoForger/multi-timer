@@ -6,6 +6,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()
     private weak var model: AppModel?
 
+    @MainActor
     func configure(model: AppModel) {
         self.model = model
         center.delegate = self
@@ -20,6 +21,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationCategory(identifier: "work-finished", actions: [extend, skip], intentIdentifiers: []),
             UNNotificationCategory(identifier: "rest-finished", actions: [startFocus], intentIdentifiers: []),
         ])
+        model.timers.filter { !$0.finished }.forEach(scheduleEarlyReminder)
         requestAuthorization(completion: {})
     }
 
@@ -32,13 +34,42 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func timerFinished(_ timer: TimerRecord) {
+        removeScheduledReminders(for: timer.id)
         send(
             title: timer.label,
             body: NSLocalizedString("Timer finished.", comment: "Notification"),
             category: "timer-finished",
-            sound: .default,
+            sound: notificationSound(timer.sound),
             userInfo: ["timerID": timer.id]
         )
+    }
+
+    func scheduleEarlyReminder(for timer: TimerRecord) {
+        removeScheduledReminders(for: timer.id)
+        guard timer.kind == .countdown,
+              !timer.isPaused,
+              let end = timer.endTS,
+              let minutes = timer.earlyReminderMinutes,
+              [1, 5, 10].contains(minutes) else { return }
+        let delay = end - Date().timeIntervalSince1970 - TimeInterval(minutes * 60)
+        guard delay > 1 else { return }
+        let content = UNMutableNotificationContent()
+        content.title = timer.label
+        content.body = String.localizedStringWithFormat(
+            NSLocalizedString("Timer finishes in %lld minutes.", comment: "Early timer reminder"),
+            minutes
+        )
+        content.sound = notificationSound(timer.sound)
+        content.userInfo = ["timerID": timer.id]
+        center.add(UNNotificationRequest(
+            identifier: "early-\(timer.id)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)
+        ))
+    }
+
+    func removeScheduledReminders(for timerID: String) {
+        center.removePendingNotificationRequests(withIdentifiers: ["early-\(timerID)"])
     }
 
     func pomodoroFinished(_ phase: PomodoroPhase) {
@@ -63,7 +94,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         title: String,
         body: String,
         category: String,
-        sound: UNNotificationSound,
+        sound: UNNotificationSound?,
         userInfo: [AnyHashable: Any] = [:]
     ) {
         let content = UNMutableNotificationContent()
@@ -73,6 +104,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         content.sound = sound
         content.userInfo = userInfo
         center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
+    private func notificationSound(_ preset: PresetSound?) -> UNNotificationSound? {
+        guard preset?.kind != .muted else { return nil }
+        guard let name = preset?.name, !name.isEmpty else { return .default }
+        return UNNotificationSound(named: UNNotificationSoundName("\(name).aiff"))
     }
 
     func userNotificationCenter(

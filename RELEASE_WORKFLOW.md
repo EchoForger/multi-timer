@@ -38,7 +38,11 @@ rg -n '0\.8\.0|CFBundleShortVersionString|CFBundleVersion|MULTITIMER_VERSION' \
 ## 3. 技术结构
 
 - `MultiTimerCore/`：可测试的数据模型、旧状态迁移、格式化、解析、原子 JSON 与控制协议。
-- `MultiTimer/`：SwiftUI 界面与 AppKit 生命周期、菜单栏、Popover、通知、权限、更新、iCloud KVS。
+- `MultiTimer/`：SwiftUI 界面与 AppKit 生命周期、菜单栏、Popover、通知、权限、更新、CloudKit。
+- `MultiTimerMobile/`：iOS 18+ 原生双标签 App、移动端预设与计时控制。
+- `MultiTimerWidgets/`：收藏预设 Widget、当前计时器 Widget 与 Live Activity。
+- `MultiTimerMobileShared/`：App Group 状态与 Activity 属性。
+- `MultiTimer.xcodeproj`：iPhone、Widget 与 Live Activity 多目标工程；Mac 发布继续使用 SwiftPM 脚本。
 - `MultiTimerCLI/`：`multitimer` 命令，通过本地 Unix Socket 控制运行实例。
 - `Tests/MultiTimerCoreTests/`：Swift XCTest。
 - `Support/`：App `Info.plist` 与 entitlements。
@@ -60,7 +64,7 @@ SwiftPM 内部 GUI 产物叫 `MultiTimer`，CLI 产物必须叫 `MultiTimerCLI`�
 
 ### 番茄钟与统计
 
-- [ ] 工作/休息、暂停、跳过、停止、延长 5 分钟与自动循环正常。
+- [ ] 工作/短休息/长休息、轮次、暂停、跳过、停止、延长 5 分钟与自动循环正常。
 - [ ] 只统计自然完成的工作阶段。
 - [ ] 每日 24 小时时间线、周/月趋势、热力图、目标、连续达成、徽章、CSV/JSON 导出与清空确认正常。
 - [ ] 工作和休息通知使用不同声音。
@@ -72,7 +76,8 @@ SwiftPM 内部 GUI 产物叫 `MultiTimer`，CLI 产物必须叫 `MultiTimerCLI`�
 - [ ] `multitimer://start?name=Tea&minutes=5` 与番茄 URL 正常。
 - [ ] CLI 的 `start/list/pause/cancel/permissions/pomodoro` 正常。
 - [ ] 设置即时保存，无保存/取消按钮；语言按钮打开 macOS 语言设置。
-- [ ] iCloud entitlement 存在时只同步轻量设置；专注历史始终保存在本机，ad-hoc 构建安全回退本地。
+- [ ] CloudKit entitlement 存在时同步预设、活跃计时器与轻量设置；专注历史始终保存在每台设备本机，ad-hoc 构建安全回退本地。
+- [ ] `CKSyncEngine` 重复操作幂等、离线恢复、服务器修订冲突与删除墓碑正常。
 
 ### 更新
 
@@ -101,6 +106,8 @@ MULTITIMER_OFFLINE=1 \
 - [ ] 无编译错误和非预期警告。
 - [ ] 旧 schema 迁移、时长解析、版本比较和原子写入测试通过。
 - [ ] `git diff --check` 通过。
+- [ ] `MultiTimerMobile` 与 `MultiTimerWidgets` 使用 iPhone SDK 无签名编译通过。
+- [ ] 真机与 TestFlight 发布按 `MOBILE_RELEASE_CHECKLIST.md` 完成签名检查点。
 
 ## 6. 视觉快照
 
@@ -191,6 +198,18 @@ brew install --cask multi-timer
 
 ## 9. 生成 DMG
 
+正式 CloudKit/Developer ID 构建需要显式提供签名身份、描述文件与公证钥匙串配置：
+
+```bash
+MULTITIMER_ENABLE_CLOUDKIT=1 \
+MULTITIMER_CODE_SIGN_IDENTITY="Developer ID Application: …" \
+MULTITIMER_PROVISIONING_PROFILE=/path/to/MultiTimer.provisionprofile \
+MULTITIMER_NOTARY_PROFILE=multitimer-notary \
+./scripts/package.sh
+```
+
+没有这些变量时脚本只生成 ad-hoc 本地测试构建，不得上传 Release 或更新 Homebrew。
+
 ```bash
 ./scripts/package.sh
 hdiutil verify dist/MultiTimer-0.7.1.dmg
@@ -207,13 +226,16 @@ hdiutil verify dist/MultiTimer-0.7.1.dmg
 git status --short
 git diff --check
 swift test
-git add README.md RELEASE_WORKFLOW.md ROADMAP.md FEATURE_TODO.md \
+git add README.md RELEASE_WORKFLOW.md MOBILE_RELEASE_CHECKLIST.md \
   Package.swift Package.resolved MultiTimer MultiTimerCore MultiTimerCLI \
-  Support scripts Tests assets index.html en/index.html styles.css script.js \
+  MultiTimerMobile MultiTimerMobileShared MultiTimerWidgets MultiTimer.xcodeproj \
+  Support scripts tests assets index.html en/index.html styles.css script.js \
   light.png dark.png .gitignore
 git commit -m "feat: release MultiTimer 0.7.1"
 git push origin master
 ```
+
+发布提交必须显式排除用户工作中的 `TODO.md`。
 
 创建 Release：
 

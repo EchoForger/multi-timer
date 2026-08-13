@@ -1,0 +1,128 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A00100000000000000000001 /* MultiTimerMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000001; };
+		A00100000000000000000002 /* MobileAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000002; };
+		A00100000000000000000003 /* MobileRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000003; };
+		A00100000000000000000004 /* MobileTimersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000004; };
+		A00100000000000000000005 /* MobileSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000005; };
+		A00100000000000000000006 /* MobileCloudSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000006; };
+		A00100000000000000000007 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000007; };
+		A00100000000000000000008 /* ActivitySupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000008; };
+		A00100000000000000000009 /* CloudKitSyncDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000009; };
+		A0010000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000A; };
+		A0010000000000000000000B /* MultiTimerCore in Frameworks */ = {isa = PBXBuildFile; productRef = D00100000000000000000001; };
+		A0010000000000000000000C /* MultiTimerWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F00100000000000000000022; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A0010000000000000000000D /* zh-Hans.lproj in Resources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000D; };
+		B00100000000000000000001 /* MultiTimerWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000011; };
+		B00100000000000000000002 /* TimerIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000012; };
+		B00100000000000000000003 /* FavoritePresetsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000013; };
+		B00100000000000000000004 /* CurrentTimerWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000014; };
+		B00100000000000000000005 /* TimerLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000015; };
+		B00100000000000000000006 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000007; };
+		B00100000000000000000007 /* ActivitySupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000008; };
+		B00100000000000000000008 /* MultiTimerCore in Frameworks */ = {isa = PBXBuildFile; productRef = D00100000000000000000002; };
+		B00100000000000000000009 /* CloudKitSyncDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00100000000000000000009; };
+		B0010000000000000000000A /* zh-Hans.lproj in Resources */ = {isa = PBXBuildFile; fileRef = F0010000000000000000000D; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C00100000000000000000001 = {isa = PBXContainerItemProxy; containerPortal = P00100000000000000000001; proxyType = 1; remoteGlobalIDString = T00100000000000000000002; remoteInfo = MultiTimerWidgets; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E00100000000000000000001 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (A0010000000000000000000C, ); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		F00100000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiTimerMobileApp.swift; sourceTree = "<group>"; };
+		F00100000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAppModel.swift; sourceTree = "<group>"; };
+		F00100000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRootView.swift; sourceTree = "<group>"; };
+		F00100000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileTimersView.swift; sourceTree = "<group>"; };
+		F00100000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSettingsView.swift; sourceTree = "<group>"; };
+		F00100000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileCloudSyncService.swift; sourceTree = "<group>"; };
+		F00100000000000000000007 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStore.swift; sourceTree = "<group>"; };
+		F00100000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitySupport.swift; sourceTree = "<group>"; };
+		F00100000000000000000009 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CloudKitSyncDriver.swift; path = ../MultiTimer/CloudKitSyncDriver.swift; sourceTree = "<group>"; };
+		F0010000000000000000000A = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F0010000000000000000000B = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F0010000000000000000000C = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MultiTimerMobile.entitlements; sourceTree = "<group>"; };
+		F0010000000000000000000D = {isa = PBXFileReference; lastKnownFileType = folder; name = zh-Hans.lproj; path = Resources/zh-Hans.lproj; sourceTree = "<group>"; };
+		F00100000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiTimerWidgetBundle.swift; sourceTree = "<group>"; };
+		F00100000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimerIntents.swift; sourceTree = "<group>"; };
+		F00100000000000000000013 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FavoritePresetsWidget.swift; sourceTree = "<group>"; };
+		F00100000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrentTimerWidget.swift; sourceTree = "<group>"; };
+		F00100000000000000000015 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimerLiveActivity.swift; sourceTree = "<group>"; };
+		F00100000000000000000016 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F00100000000000000000017 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MultiTimerWidgets.entitlements; sourceTree = "<group>"; };
+		F00100000000000000000021 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MultiTimer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00100000000000000000022 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MultiTimerWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		R00100000000000000000001 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A0010000000000000000000B, ); runOnlyForDeploymentPostprocessing = 0; };
+		R00100000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (B00100000000000000000008, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		G00100000000000000000001 = {isa = PBXGroup; children = (G00100000000000000000002, G00100000000000000000003, G00100000000000000000004, G00100000000000000000005, ); sourceTree = "<group>"; };
+		G00100000000000000000002 = {isa = PBXGroup; children = (F00100000000000000000001, F00100000000000000000002, F00100000000000000000003, F00100000000000000000004, F00100000000000000000005, F00100000000000000000006, F00100000000000000000009, F0010000000000000000000A, F0010000000000000000000B, F0010000000000000000000C, F0010000000000000000000D, ); path = MultiTimerMobile; sourceTree = "<group>"; };
+		G00100000000000000000003 = {isa = PBXGroup; children = (F00100000000000000000011, F00100000000000000000012, F00100000000000000000013, F00100000000000000000014, F00100000000000000000015, F00100000000000000000016, F00100000000000000000017, ); path = MultiTimerWidgets; sourceTree = "<group>"; };
+		G00100000000000000000004 = {isa = PBXGroup; children = (F00100000000000000000007, F00100000000000000000008, ); path = MultiTimerMobileShared; sourceTree = "<group>"; };
+		G00100000000000000000005 = {isa = PBXGroup; children = (F00100000000000000000021, F00100000000000000000022, ); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		T00100000000000000000001 = {isa = PBXNativeTarget; buildConfigurationList = L00100000000000000000002; buildPhases = (S00100000000000000000001, R00100000000000000000001, U00100000000000000000001, E00100000000000000000001, ); buildRules = (); dependencies = (Y00100000000000000000001, ); name = MultiTimerMobile; packageProductDependencies = (D00100000000000000000001, ); productName = MultiTimer; productReference = F00100000000000000000021; productType = "com.apple.product-type.application"; };
+		T00100000000000000000002 = {isa = PBXNativeTarget; buildConfigurationList = L00100000000000000000003; buildPhases = (S00100000000000000000002, R00100000000000000000002, U00100000000000000000002, ); buildRules = (); dependencies = (); name = MultiTimerWidgets; packageProductDependencies = (D00100000000000000000002, ); productName = MultiTimerWidgets; productReference = F00100000000000000000022; productType = "com.apple.product-type.app-extension"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		P00100000000000000000001 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = YES; LastSwiftUpdateCheck = 2660; LastUpgradeCheck = 2660; TargetAttributes = {T00100000000000000000001 = {CreatedOnToolsVersion = 26.6; }; T00100000000000000000002 = {CreatedOnToolsVersion = 26.6; }; }; }; buildConfigurationList = L00100000000000000000001; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, ); mainGroup = G00100000000000000000001; packageReferences = (K00100000000000000000001, ); productRefGroup = G00100000000000000000005; projectDirPath = ""; projectRoot = ""; targets = (T00100000000000000000001, T00100000000000000000002, ); };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		U00100000000000000000001 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A0010000000000000000000A, A0010000000000000000000D, ); runOnlyForDeploymentPostprocessing = 0; };
+		U00100000000000000000002 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (B0010000000000000000000A, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		S00100000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00100000000000000000001, A00100000000000000000002, A00100000000000000000003, A00100000000000000000004, A00100000000000000000005, A00100000000000000000006, A00100000000000000000007, A00100000000000000000008, A00100000000000000000009, ); runOnlyForDeploymentPostprocessing = 0; };
+		S00100000000000000000002 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00100000000000000000001, B00100000000000000000002, B00100000000000000000003, B00100000000000000000004, B00100000000000000000005, B00100000000000000000006, B00100000000000000000007, B00100000000000000000009, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		Y00100000000000000000001 = {isa = PBXTargetDependency; target = T00100000000000000000002; targetProxy = C00100000000000000000001; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		Q00100000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_OPTIMIZATION_LEVEL = 0; IPHONEOS_DEPLOYMENT_TARGET = 18.0; ONLY_ACTIVE_ARCH = YES; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 5.0; }; name = Debug; };
+		Q00100000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = YES; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; ENABLE_NS_ASSERTIONS = NO; GCC_C_LANGUAGE_STANDARD = gnu17; IPHONEOS_DEPLOYMENT_TARGET = 18.0; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
+		Q00100000000000000000011 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor; CODE_SIGN_ENTITLEMENTS = MultiTimerMobile/MultiTimerMobile.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 900; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = MultiTimerMobile/Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", ); MARKETING_VERSION = 0.9.0; PRODUCT_BUNDLE_IDENTIFIER = io.github.echoforger.multitimer.ios; PRODUCT_NAME = MultiTimer; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		Q00100000000000000000012 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor; CODE_SIGN_ENTITLEMENTS = MultiTimerMobile/MultiTimerMobile.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 900; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = MultiTimerMobile/Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", ); MARKETING_VERSION = 0.9.0; PRODUCT_BUNDLE_IDENTIFIER = io.github.echoforger.multitimer.ios; PRODUCT_NAME = MultiTimer; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+		Q00100000000000000000021 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = MultiTimerWidgets/MultiTimerWidgets.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 900; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = MultiTimerWidgets/Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.9.0; PRODUCT_BUNDLE_IDENTIFIER = io.github.echoforger.multitimer.ios.widgets; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		Q00100000000000000000022 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = MultiTimerWidgets/MultiTimerWidgets.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 900; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = MultiTimerWidgets/Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.9.0; PRODUCT_BUNDLE_IDENTIFIER = io.github.echoforger.multitimer.ios.widgets; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		L00100000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (Q00100000000000000000001, Q00100000000000000000002, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		L00100000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (Q00100000000000000000011, Q00100000000000000000012, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		L00100000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (Q00100000000000000000021, Q00100000000000000000022, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		K00100000000000000000001 = {isa = XCLocalSwiftPackageReference; relativePath = .; };
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		D00100000000000000000001 = {isa = XCSwiftPackageProductDependency; package = K00100000000000000000001; productName = MultiTimerCore; };
+		D00100000000000000000002 = {isa = XCSwiftPackageProductDependency; package = K00100000000000000000001; productName = MultiTimerCore; };
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = P00100000000000000000001;
+}

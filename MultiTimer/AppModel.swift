@@ -12,6 +12,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var now = Date().timeIntervalSince1970
     @Published private(set) var pomodoro: PomodoroSnapshot
     @Published private(set) var stats: PomodoroStats
+    @Published private(set) var presets: [TimerPreset]
+    @Published private(set) var cloudSyncAvailability: CloudSyncAvailability = .localOnly
 
     private let stateStore: StateStore
     private let statsStore: StatsStore
@@ -23,6 +25,9 @@ final class AppModel: ObservableObject {
     var onPersistenceChanged: (() -> Void)?
     var onTimerFinished: ((TimerRecord) -> Void)?
     var onPomodoroFinished: ((PomodoroPhase) -> Void)?
+    var onPresetTimerStarted: ((TimerRecord, TimerPreset) -> Void)?
+    var onTimerScheduled: ((TimerRecord) -> Void)?
+    var onTimerRemoved: ((String) -> Void)?
 
     init(stateStore: StateStore = StateStore(), statsStore: StatsStore = StatsStore()) {
         self.stateStore = stateStore
@@ -32,6 +37,7 @@ final class AppModel: ObservableObject {
         settings = document.settings
         pomodoro = document.pomodoro
         stats = statsStore.load()
+        presets = PresetCollection.normalized(document.presets)
         if pomodoro.phase == .work, pomodoro.focusStartedAt == nil {
             if let pausedRemaining = pomodoro.pausedRemaining {
                 let elapsed = max(0, TimeInterval(settings.pomodoroWorkSeconds) - pausedRemaining)
@@ -131,29 +137,102 @@ final class AppModel: ObservableObject {
         return FocusAnalytics.dailySummaries(from: stats)[key] ?? DailyFocusSummary(day: key)
     }
 
-    func startCountdown(label: String, seconds: Int) {
+    @discardableResult
+    func startCountdown(
+        label: String,
+        seconds: Int,
+        color: PresetColor? = nil,
+        sound: PresetSound? = nil,
+        earlyReminderMinutes: Int? = nil
+    ) -> TimerRecord {
         let duration = min(max(1, seconds), DurationParser.maximumSeconds)
         let start = Date().timeIntervalSince1970
-        timers.append(TimerRecord(
+        let timer = TimerRecord(
             label: cleanLabel(label, kind: .countdown),
             kind: .countdown,
             startTS: start,
             endTS: start + TimeInterval(duration),
-            originalDuration: TimeInterval(duration)
-        ))
+            originalDuration: TimeInterval(duration),
+            color: color,
+            sound: sound,
+            earlyReminderMinutes: earlyReminderMinutes
+        )
+        timers.append(timer)
         save()
+        onTimerScheduled?(timer)
+        return timer
     }
 
     func startCountdown(label: String, target: Date) {
         let start = Date().timeIntervalSince1970
         let duration = max(1, target.timeIntervalSince1970 - start)
-        timers.append(TimerRecord(
+        let timer = TimerRecord(
             label: cleanLabel(label, kind: .countdown),
             kind: .countdown,
             startTS: start,
             endTS: target.timeIntervalSince1970,
             originalDuration: duration
-        ))
+        )
+        timers.append(timer)
+        save()
+        onTimerScheduled?(timer)
+    }
+
+    func startPreset(_ preset: TimerPreset) {
+        let timer = startCountdown(
+            label: preset.name,
+            seconds: preset.durationSeconds,
+            color: preset.color,
+            sound: preset.sound,
+            earlyReminderMinutes: preset.earlyReminderMinutes
+        )
+        onPresetTimerStarted?(timer, preset)
+    }
+
+    func savePreset(_ preset: TimerPreset) {
+        var value = preset
+        value.sync = nextSyncMetadata(after: preset.sync)
+        if let index = presets.firstIndex(where: { $0.id == value.id }) {
+            presets[index] = value
+        } else {
+            value.sortOrder = presets.count
+            presets.append(value)
+        }
+        presets = PresetCollection.normalized(presets)
+        save()
+    }
+
+    func deletePreset(_ id: String) {
+        presets.removeAll { $0.id == id }
+        presets = PresetCollection.normalized(presets)
+        save()
+    }
+
+    func togglePresetFavorite(_ id: String) {
+        guard let index = presets.firstIndex(where: { $0.id == id }) else { return }
+        if presets[index].favoriteRank != nil {
+            presets[index].favoriteRank = nil
+        } else {
+            let favorites = PresetCollection.favorites(presets)
+            guard favorites.count < 4 else { return }
+            presets[index].favoriteRank = favorites.count
+        }
+        presets[index].sync = nextSyncMetadata(after: presets[index].sync)
+        presets = PresetCollection.normalized(presets)
+        save()
+    }
+
+    func movePreset(_ id: String, before targetID: String) {
+        guard id != targetID,
+              let source = presets.firstIndex(where: { $0.id == id }),
+              let target = presets.firstIndex(where: { $0.id == targetID }) else { return }
+        let value = presets.remove(at: source)
+        let insertion = source < target ? target - 1 : target
+        presets.insert(value, at: max(0, insertion))
+        for index in presets.indices {
+            presets[index].sortOrder = index
+            presets[index].sync = nextSyncMetadata(after: presets[index].sync)
+        }
         save()
     }
 
@@ -179,6 +258,9 @@ final class AppModel: ObservableObject {
                 timer.pausedAt = timestamp
             }
         }
+        if let timer = timers.first(where: { $0.id == id }) {
+            timer.isPaused ? onTimerRemoved?(id) : onTimerScheduled?(timer)
+        }
     }
 
     func togglePin(_ id: String) { mutate(id) { $0.pinned.toggle() } }
@@ -189,13 +271,20 @@ final class AppModel: ObservableObject {
             startStopwatch(label: source.label)
         } else {
             let duration = Int(source.originalDuration ?? source.remaining(at: now))
-            startCountdown(label: source.label, seconds: max(1, duration))
+            _ = startCountdown(
+                label: source.label,
+                seconds: max(1, duration),
+                color: source.color,
+                sound: source.sound,
+                earlyReminderMinutes: source.earlyReminderMinutes
+            )
         }
     }
 
     func cancel(_ id: String) {
         timers.removeAll { $0.id == id }
         notifiedTimerIDs.remove(id)
+        onTimerRemoved?(id)
         save()
     }
 
@@ -211,6 +300,7 @@ final class AppModel: ObservableObject {
             timer.laps = []
         }
         notifiedTimerIDs.remove(id)
+        if let timer = timers.first(where: { $0.id == id }) { onTimerScheduled?(timer) }
     }
 
     func setRemaining(_ id: String, seconds: Int) {
@@ -224,6 +314,7 @@ final class AppModel: ObservableObject {
             timer.finished = false
         }
         notifiedTimerIDs.remove(id)
+        if let timer = timers.first(where: { $0.id == id }) { onTimerScheduled?(timer) }
     }
 
     func setTarget(_ id: String, target: Date) {
@@ -243,19 +334,20 @@ final class AppModel: ObservableObject {
         switch pomodoro.phase {
         case .idle, .ready:
             beginWork(at: timestamp)
-        case .work, .rest:
+        case .work, .rest, .longRest:
             if let paused = pomodoro.pausedRemaining {
                 pomodoro.finishAt = timestamp + paused
                 pomodoro.pausedRemaining = nil
                 if pomodoro.phase == .work { pomodoro.resumeFocus(at: timestamp) }
             }
         }
+        touchPomodoro()
         save()
         onStatusChanged?()
     }
 
     func togglePomodoroPause() {
-        guard pomodoro.phase == .work || pomodoro.phase == .rest else { return }
+        guard pomodoro.phase == .work || pomodoro.phase == .rest || pomodoro.phase == .longRest else { return }
         let timestamp = Date().timeIntervalSince1970
         if let paused = pomodoro.pausedRemaining {
             pomodoro.finishAt = timestamp + paused
@@ -266,6 +358,7 @@ final class AppModel: ObservableObject {
             pomodoro.pausedRemaining = max(0, (pomodoro.finishAt ?? timestamp) - timestamp)
             pomodoro.finishAt = nil
         }
+        touchPomodoro()
         save()
         onStatusChanged?()
     }
@@ -276,22 +369,25 @@ final class AppModel: ObservableObject {
         case .work:
             finishFocusSession(completed: false, at: timestamp)
             beginRest(at: timestamp)
-        case .rest:
+        case .rest, .longRest:
+            if pomodoro.phase == .longRest { pomodoro.completedRounds = 0 }
             beginWork(at: timestamp)
         case .ready, .idle:
             beginWork(at: timestamp)
         }
+        touchPomodoro()
         save()
     }
 
     func extendPomodoro(by seconds: Int = 300) {
-        guard pomodoro.phase == .work || pomodoro.phase == .rest else { return }
+        guard pomodoro.phase == .work || pomodoro.phase == .rest || pomodoro.phase == .longRest else { return }
         let timestamp = Date().timeIntervalSince1970
         if pomodoro.pausedRemaining != nil {
             pomodoro.pausedRemaining! += TimeInterval(seconds)
         } else {
             pomodoro.finishAt = (pomodoro.finishAt ?? timestamp) + TimeInterval(seconds)
         }
+        touchPomodoro()
         save()
         onStatusChanged?()
     }
@@ -300,6 +396,7 @@ final class AppModel: ObservableObject {
         let timestamp = Date().timeIntervalSince1970
         if pomodoro.phase == .work { finishFocusSession(completed: false, at: timestamp) }
         pomodoro = PomodoroSnapshot()
+        touchPomodoro()
         save()
         onStatusChanged?()
     }
@@ -308,6 +405,9 @@ final class AppModel: ObservableObject {
         update(&settings)
         settings.pomodoroWorkSeconds = min(max(60, settings.pomodoroWorkSeconds), 7_200)
         settings.pomodoroBreakSeconds = min(max(60, settings.pomodoroBreakSeconds), 3_600)
+        settings.pomodoroLongBreakSeconds = min(max(60, settings.pomodoroLongBreakSeconds), 7_200)
+        settings.pomodoroRoundsBeforeLongBreak = min(max(2, settings.pomodoroRoundsBeforeLongBreak), 12)
+        settings.syncRevision = Date().timeIntervalSince1970
         save()
     }
 
@@ -324,11 +424,13 @@ final class AppModel: ObservableObject {
         settings.dailyFocusGoals.append(DailyFocusGoal(effectiveDay: day, targetMinutes: target))
         settings.dailyFocusGoals.sort { $0.effectiveDay < $1.effectiveDay }
         settings.hasSeenFocusGoalPrompt = true
+        settings.syncRevision = Date().timeIntervalSince1970
         save()
     }
 
     func dismissFocusGoalPrompt() {
         settings.hasSeenFocusGoalPrompt = true
+        settings.syncRevision = Date().timeIntervalSince1970
         save()
     }
 
@@ -339,13 +441,102 @@ final class AppModel: ObservableObject {
 
     var skippedUpdate: String? { document.skippedUpdate }
 
-    func mergeCloud(settings cloudSettings: AppSettings?) {
+    var sharedTimerStates: [SharedTimerState] {
+        var result = timers.map(SharedTimerState.init(timer:))
+        if pomodoro.phase != .idle {
+            result.append(SharedTimerState(
+                id: "pomodoro",
+                label: NSLocalizedString("Pomodoro", comment: "Shared timer name"),
+                kind: .pomodoro,
+                startedAt: pomodoro.focusStartedAt ?? now,
+                endsAt: pomodoro.finishAt,
+                pausedAt: pomodoro.pausedRemaining == nil ? nil : now,
+                pausedValue: pomodoro.pausedRemaining,
+                pomodoroPhase: pomodoro.phase,
+                completedRounds: pomodoro.completedRounds,
+                sync: pomodoro.sync
+            ))
+        }
+        return result
+    }
+
+    func setCloudSyncAvailability(_ value: CloudSyncAvailability) {
+        cloudSyncAvailability = value
+    }
+
+    func mergeCloud(
+        presets cloudPresets: [TimerPreset],
+        timers cloudTimers: [SharedTimerState],
+        settings cloudSettings: AppSettings?
+    ) {
         var changed = false
+        for incoming in cloudPresets {
+            if incoming.sync.tombstone {
+                let oldCount = presets.count
+                presets.removeAll { $0.id == incoming.id }
+                changed = changed || presets.count != oldCount
+            } else if let index = presets.firstIndex(where: { $0.id == incoming.id }) {
+                if incoming.sync.supersedes(presets[index].sync) {
+                    presets[index] = incoming
+                    changed = true
+                }
+            } else {
+                presets.append(incoming)
+                changed = true
+            }
+        }
+        presets = PresetCollection.normalized(presets)
+
+        for incoming in cloudTimers {
+            if incoming.kind == .pomodoro {
+                guard incoming.sync.supersedes(pomodoro.sync) else { continue }
+                if incoming.isDeleted || incoming.finished {
+                    pomodoro = PomodoroSnapshot()
+                } else {
+                    pomodoro.phase = incoming.pomodoroPhase ?? .ready
+                    pomodoro.finishAt = incoming.endsAt
+                    pomodoro.pausedRemaining = incoming.pausedValue
+                    pomodoro.completedRounds = incoming.completedRounds
+                    pomodoro.sync = incoming.sync
+                    if pomodoro.phase == .work, pomodoro.focusStartedAt == nil {
+                        pomodoro.beginFocus(at: max(incoming.startedAt, now))
+                    }
+                }
+                changed = true
+            } else if incoming.isDeleted {
+                let oldCount = timers.count
+                timers.removeAll { $0.id == incoming.id }
+                onTimerRemoved?(incoming.id)
+                changed = changed || timers.count != oldCount
+            } else if let record = incoming.timerRecord() {
+                if record.kind == .countdown,
+                   !record.finished,
+                   record.endTS.map({ $0 <= now }) == true {
+                    notifiedTimerIDs.insert(record.id)
+                }
+                if let index = timers.firstIndex(where: { $0.id == incoming.id }) {
+                    if incoming.sync.supersedes(timers[index].sync) {
+                        timers[index] = record
+                        changed = true
+                        record.isPaused ? onTimerRemoved?(record.id) : onTimerScheduled?(record)
+                    }
+                } else {
+                    timers.append(record)
+                    changed = true
+                    if !record.finished { onTimerScheduled?(record) }
+                }
+            }
+        }
+
         if let cloudSettings, cloudSettings.syncRevision > settings.syncRevision {
             settings = cloudSettings
             changed = true
         }
         if changed { save() }
+    }
+
+    func mergeCloud(settings cloudSettings: AppSettings?) {
+        mergeCloud(presets: [], timers: [], settings: cloudSettings)
     }
 
     func timer(matching value: String) -> TimerRecord? {
@@ -369,15 +560,16 @@ final class AppModel: ObservableObject {
     private func mutate(_ id: String, operation: (inout TimerRecord) -> Void) {
         guard let index = timers.firstIndex(where: { $0.id == id }) else { return }
         operation(&timers[index])
+        timers[index].sync = nextSyncMetadata(after: timers[index].sync)
         save()
     }
 
     private func save() {
-        document.schemaVersion = 6
+        document.schemaVersion = 8
         document.timers = timers
         document.settings = settings
         document.pomodoro = pomodoro
-        settings.syncRevision = Date().timeIntervalSince1970
+        document.presets = presets
         document.settings = settings
         try? stateStore.save(document)
         onStatusChanged?()
@@ -390,6 +582,7 @@ final class AppModel: ObservableObject {
         for index in timers.indices where timers[index].kind == .countdown && !timers[index].finished && !timers[index].isPaused {
             if timers[index].remaining(at: now) <= 0 {
                 timers[index].finished = true
+                timers[index].sync = nextSyncMetadata(after: timers[index].sync)
                 changed = true
                 if notifiedTimerIDs.insert(timers[index].id).inserted {
                     onTimerFinished?(timers[index])
@@ -399,18 +592,35 @@ final class AppModel: ObservableObject {
         if changed { save() } else { onStatusChanged?() }
 
         guard pomodoro.pausedRemaining == nil,
-              (pomodoro.phase == .work || pomodoro.phase == .rest),
+              (pomodoro.phase == .work || pomodoro.phase == .rest || pomodoro.phase == .longRest),
               pomodoroRemaining <= 0 else { return }
         let completed = pomodoro.phase
         if completed == .work {
             finishFocusSession(completed: true, at: pomodoro.finishAt ?? now)
-            beginRest(at: now)
-        } else if settings.pomodoroAutoCycle {
-            beginWork(at: now)
+            let step = PomodoroCycle.afterNaturalWork(
+                completedRounds: pomodoro.completedRounds,
+                longBreakEvery: settings.pomodoroRoundsBeforeLongBreak
+            )
+            pomodoro.completedRounds = step.completedRounds
+            beginRest(
+                at: now,
+                long: step.phase == .longRest
+            )
         } else {
-            pomodoro.phase = .ready
-            pomodoro.finishAt = nil
+            let step = PomodoroCycle.afterBreak(
+                completed,
+                completedRounds: pomodoro.completedRounds,
+                autoCycle: settings.pomodoroAutoCycle
+            )
+            pomodoro.completedRounds = step.completedRounds
+            if step.phase == .work {
+                beginWork(at: now)
+            } else {
+                pomodoro.phase = .ready
+                pomodoro.finishAt = nil
+            }
         }
+        touchPomodoro()
         save()
         onPomodoroFinished?(completed)
         onStatusChanged?()
@@ -424,12 +634,25 @@ final class AppModel: ObservableObject {
         onStatusChanged?()
     }
 
-    private func beginRest(at timestamp: TimeInterval) {
-        pomodoro.phase = .rest
+    private func beginRest(at timestamp: TimeInterval, long: Bool = false) {
+        pomodoro.phase = long ? .longRest : .rest
         pomodoro.pausedRemaining = nil
-        pomodoro.finishAt = timestamp + TimeInterval(settings.pomodoroBreakSeconds)
+        let duration = long ? settings.pomodoroLongBreakSeconds : settings.pomodoroBreakSeconds
+        pomodoro.finishAt = timestamp + TimeInterval(duration)
         pomodoro.focusStartedAt = nil
         onStatusChanged?()
+    }
+
+    private func nextSyncMetadata(after metadata: SyncMetadata) -> SyncMetadata {
+        SyncMetadata(
+            deviceID: DeviceIdentity.current,
+            revision: metadata.revision + 1,
+            modifiedAt: Date().timeIntervalSince1970
+        )
+    }
+
+    private func touchPomodoro() {
+        pomodoro.sync = nextSyncMetadata(after: pomodoro.sync)
     }
 
     private func finishFocusSession(completed: Bool, at endedAt: TimeInterval) {

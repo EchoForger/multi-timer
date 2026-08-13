@@ -9,6 +9,13 @@ readonly MULTITIMER_BUILD_DIR="$MULTITIMER_ROOT/.build"
 readonly MULTITIMER_OUTPUT_DIR="$MULTITIMER_ROOT/build"
 readonly MULTITIMER_APP="$MULTITIMER_OUTPUT_DIR/MultiTimer.app"
 readonly MULTITIMER_CLT_DIR="/Library/Developer/CommandLineTools"
+readonly MULTITIMER_SIGN_IDENTITY="${MULTITIMER_CODE_SIGN_IDENTITY:--}"
+
+if [[ -z "${MULTITIMER_ENABLE_CLOUDKIT:-}" ]]; then
+    readonly MULTITIMER_SIGN_ENTITLEMENTS="$MULTITIMER_ROOT/Support/MultiTimer.entitlements"
+else
+    readonly MULTITIMER_SIGN_ENTITLEMENTS="$MULTITIMER_ROOT/Support/MultiTimer.Cloud.entitlements"
+fi
 
 if [[ "$MULTITIMER_CONFIGURATION" != "debug" && "$MULTITIMER_CONFIGURATION" != "release" ]]; then
     print -u2 "Usage: $0 [debug|release]"
@@ -68,6 +75,10 @@ mkdir -p "$MULTITIMER_STAGED_APP/Contents/MacOS" "$MULTITIMER_RESOURCES/bin"
 /usr/bin/install -m 755 "$MULTITIMER_BIN_DIR/MultiTimerCLI" "$MULTITIMER_RESOURCES/bin/multitimer"
 /usr/bin/install -m 644 "$MULTITIMER_ROOT/Support/Info.plist" "$MULTITIMER_STAGED_APP/Contents/Info.plist"
 /usr/bin/install -m 644 "$MULTITIMER_ROOT/assets/MultiTimer.icns" "$MULTITIMER_RESOURCES/MultiTimer.icns"
+if [[ -n "${MULTITIMER_PROVISIONING_PROFILE:-}" ]]; then
+    /usr/bin/install -m 644 "$MULTITIMER_PROVISIONING_PROFILE" \
+        "$MULTITIMER_STAGED_APP/Contents/embedded.provisionprofile"
+fi
 
 for bundle in "$MULTITIMER_BIN_DIR"/*.bundle; do
     /usr/bin/ditto "$bundle" "$MULTITIMER_RESOURCES/${bundle:t}"
@@ -88,13 +99,13 @@ if [[ -f "$MULTITIMER_LAUNCH_BUNDLE/LaunchAtLoginHelper.zip" ]]; then
     /usr/libexec/PlistBuddy \
         -c "Set :CFBundleIdentifier io.github.echoforger.multitimer-LaunchAtLoginHelper" \
         "$MULTITIMER_HELPER/Contents/Info.plist"
-    /usr/bin/codesign --force --deep --sign - \
+    /usr/bin/codesign --force --deep --sign "$MULTITIMER_SIGN_IDENTITY" \
         --entitlements "$MULTITIMER_LAUNCH_BUNDLE/LaunchAtLogin.entitlements" \
         "$MULTITIMER_HELPER"
 fi
 
-/usr/bin/codesign --force --deep --sign - \
-    --entitlements "$MULTITIMER_ROOT/Support/MultiTimer.entitlements" \
+/usr/bin/codesign --force --deep --sign "$MULTITIMER_SIGN_IDENTITY" \
+    --entitlements "$MULTITIMER_SIGN_ENTITLEMENTS" \
     "$MULTITIMER_STAGED_APP"
 
 if [[ -e "$MULTITIMER_APP" ]]; then /bin/rm -rf "$MULTITIMER_APP"; fi

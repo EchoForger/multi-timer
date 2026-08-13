@@ -16,6 +16,10 @@ public struct TimerRecord: Identifiable, Codable, Equatable, Sendable {
     public var finished: Bool
     public var laps: [TimeInterval]
     public var originalDuration: TimeInterval?
+    public var color: PresetColor?
+    public var sound: PresetSound?
+    public var earlyReminderMinutes: Int?
+    public var sync: SyncMetadata
 
     public init(
         id: String = UUID().uuidString,
@@ -27,7 +31,11 @@ public struct TimerRecord: Identifiable, Codable, Equatable, Sendable {
         pinned: Bool = false,
         finished: Bool = false,
         laps: [TimeInterval] = [],
-        originalDuration: TimeInterval? = nil
+        originalDuration: TimeInterval? = nil,
+        color: PresetColor? = nil,
+        sound: PresetSound? = nil,
+        earlyReminderMinutes: Int? = nil,
+        sync: SyncMetadata = SyncMetadata(deviceID: DeviceIdentity.current)
     ) {
         self.id = id
         self.label = label
@@ -39,10 +47,15 @@ public struct TimerRecord: Identifiable, Codable, Equatable, Sendable {
         self.finished = finished
         self.laps = laps
         self.originalDuration = originalDuration
+        self.color = color
+        self.sound = sound
+        self.earlyReminderMinutes = earlyReminderMinutes
+        self.sync = sync
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, label, kind, pinned, finished, laps, duration
+        case id, label, kind, pinned, finished, laps, duration, color, sound, sync
+        case earlyReminderMinutes = "early_reminder_minutes"
         case startTS = "start_ts"
         case endTS = "end_ts"
         case pausedAt = "paused_at"
@@ -70,6 +83,11 @@ public struct TimerRecord: Identifiable, Codable, Equatable, Sendable {
         pausedAt = try? values.decodeIfPresent(TimeInterval.self, forKey: .pausedAt)
         originalDuration = (try? values.decodeIfPresent(TimeInterval.self, forKey: .originalDuration))
             ?? (try? values.decodeIfPresent(TimeInterval.self, forKey: .duration))
+        color = try? values.decodeIfPresent(PresetColor.self, forKey: .color)
+        sound = try? values.decodeIfPresent(PresetSound.self, forKey: .sound)
+        earlyReminderMinutes = try? values.decodeIfPresent(Int.self, forKey: .earlyReminderMinutes)
+        sync = (try? values.decode(SyncMetadata.self, forKey: .sync))
+            ?? SyncMetadata(deviceID: DeviceIdentity.current, modifiedAt: startTS)
 
         if kind == .countdown, endTS == nil, let duration = originalDuration {
             endTS = startTS + duration
@@ -98,6 +116,10 @@ public struct TimerRecord: Identifiable, Codable, Equatable, Sendable {
         try values.encode(finished, forKey: .finished)
         try values.encode(laps, forKey: .laps)
         try values.encodeIfPresent(originalDuration, forKey: .originalDuration)
+        try values.encodeIfPresent(color, forKey: .color)
+        try values.encodeIfPresent(sound, forKey: .sound)
+        try values.encodeIfPresent(earlyReminderMinutes, forKey: .earlyReminderMinutes)
+        try values.encode(sync, forKey: .sync)
     }
 
     public var isPaused: Bool { pausedAt != nil }
@@ -119,6 +141,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var sortByExpiry = true
     public var pomodoroWorkSeconds = 1_500
     public var pomodoroBreakSeconds = 300
+    public var pomodoroLongBreakSeconds = 900
+    public var pomodoroRoundsBeforeLongBreak = 4
     public var pomodoroAutoCycle = false
     public var showPomodoro = true
     public var updateAutomatically = true
@@ -135,6 +159,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case sortByExpiry = "sort_by_expiry"
         case pomodoroWorkSeconds = "pomodoro_work_seconds"
         case pomodoroBreakSeconds = "pomodoro_break_seconds"
+        case pomodoroLongBreakSeconds = "pomodoro_long_break_seconds"
+        case pomodoroRoundsBeforeLongBreak = "pomodoro_rounds_before_long_break"
         case pomodoroAutoCycle = "pomodoro_auto_cycle"
         case showPomodoro = "show_pomodoro"
         case updateAutomatically = "update_automatically"
@@ -151,6 +177,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         sortByExpiry = (try? values.decode(Bool.self, forKey: .sortByExpiry)) ?? true
         pomodoroWorkSeconds = (try? values.decode(Int.self, forKey: .pomodoroWorkSeconds)) ?? 1_500
         pomodoroBreakSeconds = (try? values.decode(Int.self, forKey: .pomodoroBreakSeconds)) ?? 300
+        pomodoroLongBreakSeconds = (try? values.decode(Int.self, forKey: .pomodoroLongBreakSeconds)) ?? 900
+        pomodoroRoundsBeforeLongBreak = (try? values.decode(Int.self, forKey: .pomodoroRoundsBeforeLongBreak)) ?? 4
         pomodoroAutoCycle = (try? values.decode(Bool.self, forKey: .pomodoroAutoCycle)) ?? false
         showPomodoro = (try? values.decode(Bool.self, forKey: .showPomodoro)) ?? true
         updateAutomatically = (try? values.decode(Bool.self, forKey: .updateAutomatically)) ?? true
@@ -183,25 +211,28 @@ public struct StateDocument: Codable, Equatable, Sendable {
     public var timers: [TimerRecord]
     public var settings: AppSettings
     public var pomodoro: PomodoroSnapshot
+    public var presets: [TimerPreset]
     public var skippedUpdate: String?
 
     public init(
-        schemaVersion: Int = 6,
+        schemaVersion: Int = 8,
         timers: [TimerRecord] = [],
         settings: AppSettings = AppSettings(),
         pomodoro: PomodoroSnapshot = PomodoroSnapshot(),
+        presets: [TimerPreset] = [],
         skippedUpdate: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.timers = timers
         self.settings = settings
         self.pomodoro = pomodoro
+        self.presets = presets
         self.skippedUpdate = skippedUpdate
     }
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
-        case timers, settings, pomodoro
+        case timers, settings, pomodoro, presets
         case skippedUpdate = "skipped_update"
     }
 
@@ -211,13 +242,45 @@ public struct StateDocument: Codable, Equatable, Sendable {
         timers = (try? values.decode([TimerRecord].self, forKey: .timers)) ?? []
         settings = (try? values.decode(AppSettings.self, forKey: .settings)) ?? AppSettings()
         pomodoro = (try? values.decode(PomodoroSnapshot.self, forKey: .pomodoro)) ?? PomodoroSnapshot()
+        presets = PresetCollection.normalized((try? values.decode([TimerPreset].self, forKey: .presets)) ?? [])
         skippedUpdate = try? values.decodeIfPresent(String.self, forKey: .skippedUpdate)
-        schemaVersion = 6
+        schemaVersion = 8
     }
 }
 
 public enum PomodoroPhase: String, Codable, Sendable {
-    case idle, ready, work, rest
+    case idle, ready, work, rest, longRest
+}
+
+public enum PomodoroCycle {
+    public struct Step: Equatable, Sendable {
+        public var phase: PomodoroPhase
+        public var completedRounds: Int
+
+        public init(phase: PomodoroPhase, completedRounds: Int) {
+            self.phase = phase
+            self.completedRounds = max(0, completedRounds)
+        }
+    }
+
+    public static func breakPhase(afterCompletedRounds rounds: Int, longBreakEvery: Int) -> PomodoroPhase {
+        rounds >= max(2, longBreakEvery) ? .longRest : .rest
+    }
+
+    public static func afterNaturalWork(completedRounds: Int, longBreakEvery: Int) -> Step {
+        let rounds = max(0, completedRounds) + 1
+        return Step(
+            phase: breakPhase(afterCompletedRounds: rounds, longBreakEvery: longBreakEvery),
+            completedRounds: rounds
+        )
+    }
+
+    public static func afterBreak(_ phase: PomodoroPhase, completedRounds: Int, autoCycle: Bool) -> Step {
+        Step(
+            phase: autoCycle ? .work : .ready,
+            completedRounds: phase == .longRest ? 0 : completedRounds
+        )
+    }
 }
 
 public struct PomodoroSnapshot: Codable, Equatable, Sendable {
@@ -227,6 +290,8 @@ public struct PomodoroSnapshot: Codable, Equatable, Sendable {
     public var focusStartedAt: TimeInterval?
     public var focusSegmentStartedAt: TimeInterval?
     public var focusIntervals: [FocusInterval] = []
+    public var completedRounds = 0
+    public var sync = SyncMetadata(deviceID: DeviceIdentity.current)
 
     public init() {}
 
@@ -237,6 +302,8 @@ public struct PomodoroSnapshot: Codable, Equatable, Sendable {
         case focusStartedAt = "focus_started_at"
         case focusSegmentStartedAt = "focus_segment_started_at"
         case focusIntervals = "focus_intervals"
+        case completedRounds = "completed_rounds"
+        case sync
     }
 
     public init(from decoder: Decoder) throws {
@@ -247,6 +314,9 @@ public struct PomodoroSnapshot: Codable, Equatable, Sendable {
         focusStartedAt = try? values.decodeIfPresent(TimeInterval.self, forKey: .focusStartedAt)
         focusSegmentStartedAt = try? values.decodeIfPresent(TimeInterval.self, forKey: .focusSegmentStartedAt)
         focusIntervals = (try? values.decode([FocusInterval].self, forKey: .focusIntervals)) ?? []
+        completedRounds = (try? values.decode(Int.self, forKey: .completedRounds)) ?? 0
+        sync = (try? values.decode(SyncMetadata.self, forKey: .sync))
+            ?? SyncMetadata(deviceID: DeviceIdentity.current, modifiedAt: finishAt ?? focusStartedAt ?? 0)
         if phase == .work, pausedRemaining == nil, focusSegmentStartedAt == nil {
             focusSegmentStartedAt = focusStartedAt
         }

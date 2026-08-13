@@ -10,10 +10,10 @@ struct PomodoroView: View {
             VStack(spacing: 8) {
                 HStack {
                     Image(systemName: phaseIcon)
-                        .foregroundColor(model.pomodoro.phase == .rest ? .green : .accentColor)
+                        .foregroundColor(isBreakPhase ? .green : .accentColor)
                     Text(LocalizedStringKey(phaseTitle)).fontWeight(.medium)
                     Spacer()
-                    if model.pomodoro.phase == .work || model.pomodoro.phase == .rest {
+                    if isActivePhase {
                         Text(TimeFormat.clock(model.pomodoroRemaining))
                             .font(.system(.title3, design: .monospaced).weight(.semibold))
                     } else {
@@ -22,7 +22,7 @@ struct PomodoroView: View {
                     }
                 }
 
-                if model.pomodoro.phase == .work || model.pomodoro.phase == .rest {
+                if isActivePhase {
                     HStack(spacing: 6) {
                         Button(model.pomodoro.pausedRemaining == nil ? "Pause" : "Resume") {
                             model.togglePomodoroPause()
@@ -39,6 +39,16 @@ struct PomodoroView: View {
                     }
                         .frame(maxWidth: .infinity)
                 }
+
+                HStack {
+                    Label(
+                        "Round \(min(model.pomodoro.completedRounds + 1, model.settings.pomodoroRoundsBeforeLongBreak)) of \(model.settings.pomodoroRoundsBeforeLongBreak)",
+                        systemImage: "repeat"
+                    )
+                    Spacer()
+                    Text(nextBreakTitle).foregroundStyle(.secondary)
+                }
+                .font(.caption)
 
                 if let goal = model.todayGoalMinutes {
                     VStack(spacing: 3) {
@@ -75,13 +85,17 @@ struct PomodoroView: View {
     }
 
     private var isActivePhase: Bool {
-        model.pomodoro.phase == .work || model.pomodoro.phase == .rest
+        model.pomodoro.phase == .work || isBreakPhase
+    }
+
+    private var isBreakPhase: Bool {
+        model.pomodoro.phase == .rest || model.pomodoro.phase == .longRest
     }
 
     private var panelTint: Color {
         switch model.pomodoro.phase {
         case .work: return .red
-        case .rest: return .green
+        case .rest, .longRest: return .green
         case .idle, .ready: return .clear
         }
     }
@@ -92,6 +106,7 @@ struct PomodoroView: View {
         case .ready: return "Break complete"
         case .work: return model.pomodoro.pausedRemaining == nil ? "Focus" : "Focus paused"
         case .rest: return model.pomodoro.pausedRemaining == nil ? "Break" : "Break paused"
+        case .longRest: return model.pomodoro.pausedRemaining == nil ? "Long Break" : "Long Break paused"
         }
     }
 
@@ -100,6 +115,13 @@ struct PomodoroView: View {
         case .idle, .ready: return "circle.dashed"
         case .work: return "flame.fill"
         case .rest: return "cup.and.saucer.fill"
+        case .longRest: return "bed.double.fill"
         }
+    }
+
+    private var nextBreakTitle: LocalizedStringKey {
+        model.pomodoro.completedRounds + 1 >= model.settings.pomodoroRoundsBeforeLongBreak
+            ? "Next: long break"
+            : "Next: short break"
     }
 }

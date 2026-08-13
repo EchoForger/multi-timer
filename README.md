@@ -6,7 +6,7 @@
 
 **多个倒计时，一个节奏。**
 
-一款轻巧、原生的 macOS 菜单栏多任务倒计时器，内置番茄钟和专注时间线。
+一款轻巧、原生的多设备计时器：Mac 菜单栏、iPhone、Widget 与 Live Activity，内置完整番茄循环和专注时间线。
 
 [![Latest Release](https://img.shields.io/github/v/release/EchoForger/multi-timer?style=flat-square&label=release&color=007AFF)](https://github.com/EchoForger/multi-timer/releases/latest)
 [![macOS](https://img.shields.io/badge/macOS-Ventura%2B-1D1D1F?style=flat-square&logo=apple&logoColor=F5F5F7)](https://www.apple.com/macos/)
@@ -77,9 +77,13 @@ brew uninstall --cask multi-timer
 6. 点击“秒表”开始正向计时，并使用“计圈”记录圈次。
 7. 时间到后，选择“重新计时”或“已检查”。
 
+### 倒计时预设
+
+常用倒计时可以保存为预设，并设置名称、时长、系统语义色、系统声音或静音，以及提前 1/5/10 分钟提醒。预设数量不限，支持搜索和拖动排序；最多收藏四个，收藏会显示在 Mac 主面板和 iPhone Widget，点击一次立即开始。秒表和番茄钟不会混入预设列表。
+
 ### 番茄钟
 
-番茄钟位于普通计时器列表之外，默认工作 25 分钟、休息 5 分钟。工作结束后自动开始休息；开启自动循环后，休息结束自动开始下一轮工作，否则等待你点击“开始工作”。工作和休息均支持暂停、继续、跳过与停止。菜单栏同时显示番茄钟和普通倒计时：专注状态使用红色胶囊，休息状态使用绿色胶囊，普通倒计时保持系统样式。
+番茄钟位于普通计时器列表之外，默认工作 25 分钟、短休息 5 分钟、长休息 15 分钟，每完成 4 个番茄钟进入长休息。四项参数均可调整；只有自然完成的工作阶段增加轮次，跳过或中断仍保留实际专注时长但不增加完整轮次。开启自动循环后，休息结束自动开始下一轮工作。菜单栏同时显示番茄钟和普通倒计时：专注状态使用红色胶囊，休息状态使用绿色胶囊，普通倒计时保持系统样式。
 
 番茄钟卡片显示今日专注进度、专注次数和完整番茄钟数。点击番茄钟旁的统计图标，可在同一个菜单栏面板中查看每天的 24 小时专注时间线，以及自然周、自然月的专注趋势和番茄钟热力图。每日目标支持 15–480 分钟，连续达成天数与 10–1000 小时里程碑均从原始记录实时计算。运行中的番茄阶段会在重启后恢复，暂停时间不会计入有效专注时长。
 
@@ -98,7 +102,11 @@ MultiTimer 每次启动都会通过 GitHub Release 检查最新版。发现新�
 
 ## 特性
 
-- 独立番茄钟：工作自动转休息、可选自动循环、暂停、跳过和停止
+- 不限数量的倒计时预设：搜索、排序、四收藏、颜色、声音与提前提醒
+- 完整番茄循环：短休息、长休息、轮次与可选自动循环
+- 原生 iPhone 双标签界面、收藏预设 Widget、当前计时器 Widget 与 Live Activity
+- Live Activity 最近操作自动选择、手动固定，以及暂停、继续、延长和结束确认
+- CloudKit 私有数据库与 `CKSyncEngine` 同步预设、活跃计时器和设置；支持离线队列、幂等操作、冲突修订与删除墓碑
 - 番茄钟彩色菜单栏胶囊与普通倒计时同时显示，并为工作/休息使用不同提示音
 - 精确扣除暂停时间的每日 24 小时专注时间线
 - 自然周/月趋势、番茄钟热力图和中性的上一周期对比
@@ -123,9 +131,9 @@ MultiTimer 每次启动都会通过 GitHub Release 检查最新版。发现新�
 - 原子保存未结束的任务和设置，并兼容旧版状态文件
 - 启动后自动展开主面板；收回后仅驻留菜单栏，不显示 Dock 图标
 - 无账户、无遥测；默认仅使用本地数据
-- 具备 Apple iCloud KVS entitlement 的签名构建可同步轻量设置；持续增长的专注历史始终留在本机
+- 具备 Apple CloudKit entitlement 的签名构建可同步预设、活跃计时器和轻量设置；持续增长的专注历史始终留在每台设备本机
 
-普通状态保存在 `~/.config/multitimer/state.json`，番茄钟记录保存在 `~/.config/multitimer/pomodoro-stats.json`。每条记录包含开始/结束时间、有效专注秒数、完成状态、记录时区和不含任务内容的专注片段；目标、趋势、连续天数与徽章均实时派生，不保存任务名，不发送遥测。历史默认永久保存在本机；当前 ad-hoc 公共构建没有 iCloud entitlement，会安全使用本地存储。
+Mac 普通状态保存在 `~/.config/multitimer/state.json`，番茄钟记录保存在 `~/.config/multitimer/pomodoro-stats.json`。iPhone 与 Widget 使用 App Group 中的共享状态文件。每条专注记录包含开始/结束时间、有效专注秒数、完成状态、记录时区和不含任务内容的专注片段；目标、趋势、连续天数与徽章均实时派生，不保存任务名，不发送遥测。历史默认永久保存在本机；没有 iCloud entitlement 时会安全使用本地存储。
 
 ## 自动化
 
@@ -178,6 +186,10 @@ cd multi-timer
 ```bash
 ./scripts/package.sh
 ```
+
+### 构建 iPhone 与 Widget
+
+使用 Xcode 26 打开 `MultiTimer.xcodeproj`，选择 `MultiTimerMobile` scheme。iPhone 首版最低支持 iOS 18。真机、CloudKit、Widget、Live Activity 与 TestFlight 发布前需要完成 [移动端发布检查点](MOBILE_RELEASE_CHECKLIST.md) 中的 Developer Team、Container、App Group 和描述文件配置。
 
 ### 参与贡献
 

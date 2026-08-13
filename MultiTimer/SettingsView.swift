@@ -19,6 +19,23 @@ struct SettingsView: View {
             settingSection("Pomodoro") {
                 durationSlider("Focus duration", keyPath: \.pomodoroWorkSeconds, range: 1...120)
                 durationSlider("Break duration", keyPath: \.pomodoroBreakSeconds, range: 1...60)
+                durationSlider("Long break duration", keyPath: \.pomodoroLongBreakSeconds, range: 1...120)
+                VStack(spacing: 4) {
+                    HStack {
+                        Text("Rounds before long break")
+                        Spacer()
+                        Text("\(model.settings.pomodoroRoundsBeforeLongBreak)")
+                            .font(.body.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { Double(model.settings.pomodoroRoundsBeforeLongBreak) },
+                            set: { value in model.updateSettings { $0.pomodoroRoundsBeforeLongBreak = Int(value.rounded()) } }
+                        ),
+                        in: 2...12,
+                        step: 1
+                    )
+                }
                 Toggle("Automatically start the next focus", isOn: binding(\.pomodoroAutoCycle))
                 Toggle("Show Pomodoro in the menu", isOn: binding(\.showPomodoro))
             }
@@ -31,6 +48,17 @@ struct SettingsView: View {
                 }
                 actionRow("Language", button: "Open Language Settings…", action: openLanguageSettings)
                 actionRow("Permissions", button: "Open Permissions…") { WindowRouter.shared.permissions() }
+            }
+
+            settingSection("iCloud") {
+                HStack {
+                    Text("Sync status")
+                    Spacer()
+                    Label(syncStatus, systemImage: syncIcon)
+                        .foregroundStyle(model.cloudSyncAvailability == .paused ? .orange : .secondary)
+                }
+                Text("Presets, active timers, and settings sync. Focus history stays on this Mac.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Text("Changes are saved automatically.")
@@ -98,6 +126,24 @@ struct SettingsView: View {
         ]
         for value in urls {
             if let url = URL(string: value), NSWorkspace.shared.open(url) { break }
+        }
+    }
+
+    private var syncStatus: LocalizedStringKey {
+        switch model.cloudSyncAvailability {
+        case .localOnly: "Local only"
+        case .syncing: "Syncing…"
+        case .current: "Up to date"
+        case .paused: "Sync paused"
+        }
+    }
+
+    private var syncIcon: String {
+        switch model.cloudSyncAvailability {
+        case .localOnly: "externaldrive"
+        case .syncing: "arrow.triangle.2.circlepath.icloud"
+        case .current: "checkmark.icloud"
+        case .paused: "icloud.slash"
         }
     }
 }

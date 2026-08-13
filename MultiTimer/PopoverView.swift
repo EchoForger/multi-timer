@@ -4,6 +4,7 @@ import SwiftUI
 
 enum PopoverPage: Equatable {
     case timers
+    case presets
     case statistics
     case settings
 }
@@ -33,6 +34,9 @@ struct PopoverView: View {
 
     private var preferredHeight: CGFloat {
         switch router.page {
+        case .presets:
+            if model.presets.isEmpty { return 440 }
+            return min(650, max(330, 190 + CGFloat(min(model.presets.count, 7)) * 58))
         case .settings: return 620
         case .statistics: return 680
         case .timers:
@@ -56,6 +60,7 @@ struct PopoverView: View {
                 Group {
                     switch router.page {
                     case .timers: timerPage
+                    case .presets: PresetsView(model: model)
                     case .statistics: ScrollView { StatisticsView(model: model) }
                     case .settings: ScrollView { SettingsView(model: model) }
                     }
@@ -69,6 +74,7 @@ struct PopoverView: View {
         .frame(width: 360, height: preferredHeight)
         .animation(.easeInOut(duration: 0.22), value: router.page)
         .animation(.easeInOut(duration: 0.22), value: model.sortedTimers.count)
+        .animation(.easeInOut(duration: 0.22), value: model.presets.count)
         .animation(.easeInOut(duration: 0.18), value: kind)
         .onAppear { onPreferredHeight(preferredHeight) }
         .onChange(of: preferredHeight) { onPreferredHeight($0) }
@@ -104,6 +110,7 @@ struct PopoverView: View {
     private var headerTitle: LocalizedStringKey {
         switch router.page {
         case .timers: return "MultiTimer"
+        case .presets: return "Timer Presets"
         case .statistics: return "Focus Statistics"
         case .settings: return "Settings"
         }
@@ -112,6 +119,7 @@ struct PopoverView: View {
     private var timerPage: some View {
         ScrollView {
             VStack(spacing: 10) {
+                PresetFavoritesView(model: model) { router.presets() }
                 creationCard
                 if model.settings.showPomodoro {
                     PomodoroView(model: model) { router.statistics() }
@@ -298,6 +306,10 @@ private struct TimerRow: View {
         }
         .padding(8)
         .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(timer.color?.swiftUIColor.opacity(0.55) ?? .clear, lineWidth: 1)
+        }
         .contentShape(Rectangle())
         .contextMenu {
             Button(timer.isPaused ? "Resume" : "Pause") { model.togglePause(timer.id) }

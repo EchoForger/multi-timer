@@ -1,28 +1,34 @@
 import Foundation
 
 public enum MultiTimerPaths {
+    private static var baseDirectory: URL {
+        #if os(macOS)
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/multitimer")
+        #else
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MultiTimer")
+        #endif
+    }
+
     public static var stateURL: URL {
         if let override = ProcessInfo.processInfo.environment["MULTITIMER_STATE_PATH"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/multitimer/state.json")
+        return baseDirectory.appendingPathComponent("state.json")
     }
 
     public static var statsURL: URL {
         if let override = ProcessInfo.processInfo.environment["MULTITIMER_STATS_PATH"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/multitimer/pomodoro-stats.json")
+        return baseDirectory.appendingPathComponent("pomodoro-stats.json")
     }
 
     public static var socketURL: URL {
         if let override = ProcessInfo.processInfo.environment["MULTITIMER_SOCKET_PATH"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/multitimer/control.sock")
+        return baseDirectory.appendingPathComponent("control.sock")
     }
 }
 

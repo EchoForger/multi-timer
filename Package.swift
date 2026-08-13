@@ -5,8 +5,9 @@ import PackageDescription
 let package = Package(
     name: "MultiTimer",
     defaultLocalization: "en",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v13), .iOS("18.0")],
     products: [
+        .library(name: "MultiTimerCore", targets: ["MultiTimerCore"]),
         .executable(name: "MultiTimer", targets: ["MultiTimer"]),
         .executable(name: "MultiTimerCLI", targets: ["MultiTimerCLI"]),
     ],

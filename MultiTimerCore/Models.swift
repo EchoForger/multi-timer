@@ -123,6 +123,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var showPomodoro = true
     public var updateAutomatically = true
     public var updatePreferenceSet = false
+    public var dailyFocusGoals: [DailyFocusGoal] = []
+    public var hasSeenFocusGoalPrompt = false
     public var syncRevision: TimeInterval = 0
 
     public init() {}
@@ -137,6 +139,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case showPomodoro = "show_pomodoro"
         case updateAutomatically = "update_automatically"
         case updatePreferenceSet = "update_preference_set"
+        case dailyFocusGoals = "daily_focus_goals"
+        case hasSeenFocusGoalPrompt = "has_seen_focus_goal_prompt"
         case syncRevision = "sync_revision"
     }
 
@@ -151,7 +155,26 @@ public struct AppSettings: Codable, Equatable, Sendable {
         showPomodoro = (try? values.decode(Bool.self, forKey: .showPomodoro)) ?? true
         updateAutomatically = (try? values.decode(Bool.self, forKey: .updateAutomatically)) ?? true
         updatePreferenceSet = (try? values.decode(Bool.self, forKey: .updatePreferenceSet)) ?? false
+        dailyFocusGoals = (try? values.decode([DailyFocusGoal].self, forKey: .dailyFocusGoals)) ?? []
+        hasSeenFocusGoalPrompt = (try? values.decode(Bool.self, forKey: .hasSeenFocusGoalPrompt)) ?? false
         syncRevision = (try? values.decode(TimeInterval.self, forKey: .syncRevision)) ?? 0
+    }
+}
+
+public struct DailyFocusGoal: Codable, Equatable, Sendable, Identifiable {
+    public var effectiveDay: String
+    public var targetMinutes: Int?
+
+    public var id: String { effectiveDay }
+
+    public init(effectiveDay: String, targetMinutes: Int?) {
+        self.effectiveDay = effectiveDay
+        self.targetMinutes = targetMinutes.map { min(max(15, $0), 480) }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case effectiveDay = "effective_day"
+        case targetMinutes = "target_minutes"
     }
 }
 
@@ -163,7 +186,7 @@ public struct StateDocument: Codable, Equatable, Sendable {
     public var skippedUpdate: String?
 
     public init(
-        schemaVersion: Int = 5,
+        schemaVersion: Int = 6,
         timers: [TimerRecord] = [],
         settings: AppSettings = AppSettings(),
         pomodoro: PomodoroSnapshot = PomodoroSnapshot(),
@@ -189,7 +212,7 @@ public struct StateDocument: Codable, Equatable, Sendable {
         settings = (try? values.decode(AppSettings.self, forKey: .settings)) ?? AppSettings()
         pomodoro = (try? values.decode(PomodoroSnapshot.self, forKey: .pomodoro)) ?? PomodoroSnapshot()
         skippedUpdate = try? values.decodeIfPresent(String.self, forKey: .skippedUpdate)
-        schemaVersion = 5
+        schemaVersion = 6
     }
 }
 
@@ -202,6 +225,8 @@ public struct PomodoroSnapshot: Codable, Equatable, Sendable {
     public var finishAt: TimeInterval?
     public var pausedRemaining: TimeInterval?
     public var focusStartedAt: TimeInterval?
+    public var focusSegmentStartedAt: TimeInterval?
+    public var focusIntervals: [FocusInterval] = []
 
     public init() {}
 
@@ -210,30 +235,123 @@ public struct PomodoroSnapshot: Codable, Equatable, Sendable {
         case finishAt = "finish_at"
         case pausedRemaining = "paused_remaining"
         case focusStartedAt = "focus_started_at"
+        case focusSegmentStartedAt = "focus_segment_started_at"
+        case focusIntervals = "focus_intervals"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        phase = (try? values.decode(PomodoroPhase.self, forKey: .phase)) ?? .idle
+        finishAt = try? values.decodeIfPresent(TimeInterval.self, forKey: .finishAt)
+        pausedRemaining = try? values.decodeIfPresent(TimeInterval.self, forKey: .pausedRemaining)
+        focusStartedAt = try? values.decodeIfPresent(TimeInterval.self, forKey: .focusStartedAt)
+        focusSegmentStartedAt = try? values.decodeIfPresent(TimeInterval.self, forKey: .focusSegmentStartedAt)
+        focusIntervals = (try? values.decode([FocusInterval].self, forKey: .focusIntervals)) ?? []
+        if phase == .work, pausedRemaining == nil, focusSegmentStartedAt == nil {
+            focusSegmentStartedAt = focusStartedAt
+        }
+    }
+
+    public mutating func beginFocus(at timestamp: TimeInterval) {
+        focusStartedAt = timestamp
+        focusSegmentStartedAt = timestamp
+        focusIntervals = []
+    }
+
+    public mutating func pauseFocus(at timestamp: TimeInterval) {
+        closeFocusSegment(at: timestamp)
+    }
+
+    public mutating func resumeFocus(at timestamp: TimeInterval) {
+        if focusStartedAt != nil, focusSegmentStartedAt == nil {
+            focusSegmentStartedAt = timestamp
+        }
+    }
+
+    public mutating func finishFocus(at timestamp: TimeInterval, completed: Bool, timeZone: TimeZone = .current) -> FocusSession? {
+        guard let startedAt = focusStartedAt else { return nil }
+        closeFocusSegment(at: timestamp)
+        let intervals = focusIntervals
+        let focusedSeconds = intervals.reduce(0) { $0 + $1.duration }
+        focusStartedAt = nil
+        focusSegmentStartedAt = nil
+        focusIntervals = []
+        return FocusSession(
+            startedAt: startedAt,
+            endedAt: max(startedAt, timestamp),
+            completed: completed,
+            focusedSeconds: focusedSeconds,
+            timeZoneIdentifier: timeZone.identifier,
+            legacyEstimated: false,
+            focusIntervals: intervals
+        )
+    }
+
+    private mutating func closeFocusSegment(at timestamp: TimeInterval) {
+        guard let segmentStart = focusSegmentStartedAt else { return }
+        let end = max(segmentStart, timestamp)
+        if end > segmentStart { focusIntervals.append(FocusInterval(startedAt: segmentStart, endedAt: end)) }
+        focusSegmentStartedAt = nil
+    }
+}
+
+public struct FocusInterval: Codable, Equatable, Sendable, Identifiable {
+    public var startedAt: TimeInterval
+    public var endedAt: TimeInterval
+    public var id: String { "\(startedAt)-\(endedAt)" }
+    public var duration: TimeInterval { max(0, endedAt - startedAt) }
+
+    public init(startedAt: TimeInterval, endedAt: TimeInterval) {
+        self.startedAt = startedAt
+        self.endedAt = max(startedAt, endedAt)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case startedAt = "started_at"
+        case endedAt = "ended_at"
     }
 }
 
 public struct FocusSession: Identifiable, Codable, Equatable, Sendable {
+    public var id: String
     public var startedAt: TimeInterval
     public var endedAt: TimeInterval?
     public var completed: Bool
-
-    public var id: String { "\(startedAt)-\(endedAt ?? 0)" }
+    public var focusedSeconds: TimeInterval
+    public var timeZoneIdentifier: String
+    public var legacyEstimated: Bool
+    public var focusIntervals: [FocusInterval]
 
     public init(
+        id: String = UUID().uuidString,
         startedAt: TimeInterval,
         endedAt: TimeInterval? = nil,
-        completed: Bool = false
+        completed: Bool = false,
+        focusedSeconds: TimeInterval? = nil,
+        timeZoneIdentifier: String = TimeZone.current.identifier,
+        legacyEstimated: Bool = false,
+        focusIntervals: [FocusInterval] = []
     ) {
+        self.id = id
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.completed = completed
+        self.focusedSeconds = max(0, focusedSeconds ?? endedAt.map { $0 - startedAt } ?? 0)
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.legacyEstimated = legacyEstimated
+        self.focusIntervals = focusIntervals.isEmpty && endedAt != nil
+            ? [FocusInterval(startedAt: startedAt, endedAt: endedAt!)]
+            : focusIntervals
     }
 
     enum CodingKeys: String, CodingKey {
-        case completed, intervals
+        case id, completed, intervals
         case startedAt = "started_at"
         case endedAt = "ended_at"
+        case focusedSeconds = "focused_seconds"
+        case timeZoneIdentifier = "time_zone"
+        case legacyEstimated = "legacy_estimated"
+        case focusIntervals = "focus_intervals"
     }
 
     private struct LegacyInterval: Codable {
@@ -243,6 +361,7 @@ public struct FocusSession: Identifiable, Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? values.decode(String.self, forKey: .id)) ?? UUID().uuidString
         completed = (try? values.decode(Bool.self, forKey: .completed)) ?? false
         let intervals = (try? values.decode([LegacyInterval].self, forKey: .intervals)) ?? []
         startedAt = (try? values.decode(TimeInterval.self, forKey: .startedAt))
@@ -250,35 +369,60 @@ public struct FocusSession: Identifiable, Codable, Equatable, Sendable {
             ?? 0
         endedAt = (try? values.decodeIfPresent(TimeInterval.self, forKey: .endedAt))
             ?? intervals.compactMap(\.end).max()
+        let hasPreciseDuration = values.contains(.focusedSeconds)
+        if let precise = try? values.decode(TimeInterval.self, forKey: .focusedSeconds) {
+            focusedSeconds = max(0, precise)
+        } else if let end = endedAt {
+            focusedSeconds = max(0, end - startedAt)
+        } else {
+            focusedSeconds = 0
+        }
+        timeZoneIdentifier = (try? values.decode(String.self, forKey: .timeZoneIdentifier))
+            ?? TimeZone.current.identifier
+        legacyEstimated = (try? values.decode(Bool.self, forKey: .legacyEstimated)) ?? !hasPreciseDuration
+        focusIntervals = (try? values.decode([FocusInterval].self, forKey: .focusIntervals)) ?? []
+        if focusIntervals.isEmpty, let endedAt, endedAt > startedAt {
+            focusIntervals = [FocusInterval(startedAt: startedAt, endedAt: endedAt)]
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
         try values.encode(startedAt, forKey: .startedAt)
         try values.encodeIfPresent(endedAt, forKey: .endedAt)
         try values.encode(completed, forKey: .completed)
+        try values.encode(focusedSeconds, forKey: .focusedSeconds)
+        try values.encode(timeZoneIdentifier, forKey: .timeZoneIdentifier)
+        try values.encode(legacyEstimated, forKey: .legacyEstimated)
+        try values.encode(focusIntervals, forKey: .focusIntervals)
     }
 }
 
 public struct PomodoroStats: Codable, Equatable, Sendable {
+    public var schemaVersion: Int
     public var sessions: [FocusSession]
     public var syncRevision: TimeInterval
 
     public init(
+        schemaVersion: Int = 2,
         sessions: [FocusSession] = [],
         syncRevision: TimeInterval = 0
     ) {
+        self.schemaVersion = schemaVersion
         self.sessions = sessions
         self.syncRevision = syncRevision
     }
 
     enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
         case sessions
         case syncRevision = "sync_revision"
     }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = 2
         sessions = ((try? values.decode([FocusSession].self, forKey: .sessions)) ?? [])
             .filter { $0.endedAt != nil }
         syncRevision = (try? values.decode(TimeInterval.self, forKey: .syncRevision)) ?? 0

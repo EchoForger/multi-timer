@@ -2,7 +2,7 @@
 
 set -euo pipefail
 readonly MULTITIMER_ROOT="${0:A:h:h}"
-readonly MULTITIMER_VERSION="0.7.3"
+readonly MULTITIMER_VERSION="0.8.0"
 readonly MULTITIMER_STAGE="$(/usr/bin/mktemp -d /private/tmp/multitimer-dmg.XXXXXX)"
 trap '/bin/rm -rf "$MULTITIMER_STAGE"' EXIT
 

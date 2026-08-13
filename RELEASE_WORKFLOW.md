@@ -31,7 +31,7 @@ git diff --stat
 - [ ] Release Notes 与 Homebrew cask。
 
 ```bash
-rg -n '0\.7\.1|CFBundleShortVersionString|CFBundleVersion|MULTITIMER_VERSION' \
+rg -n '0\.8\.0|CFBundleShortVersionString|CFBundleVersion|MULTITIMER_VERSION' \
   Support MultiTimer Scripts
 ```
 
@@ -62,7 +62,7 @@ SwiftPM 内部 GUI 产物叫 `MultiTimer`，CLI 产物必须叫 `MultiTimerCLI`�
 
 - [ ] 工作/休息、暂停、跳过、停止、延长 5 分钟与自动循环正常。
 - [ ] 只统计自然完成的工作阶段。
-- [ ] 每日 24 小时时间线、专注次数、完整番茄钟、CSV 导出与清空确认正常。
+- [ ] 每日 24 小时时间线、周/月趋势、热力图、目标、连续达成、徽章、CSV/JSON 导出与清空确认正常。
 - [ ] 工作和休息通知使用不同声音。
 
 ### 系统集成
@@ -72,7 +72,7 @@ SwiftPM 内部 GUI 产物叫 `MultiTimer`，CLI 产物必须叫 `MultiTimerCLI`�
 - [ ] `multitimer://start?name=Tea&minutes=5` 与番茄 URL 正常。
 - [ ] CLI 的 `start/list/pause/cancel/permissions/pomodoro` 正常。
 - [ ] 设置即时保存，无保存/取消按钮；语言按钮打开 macOS 语言设置。
-- [ ] iCloud entitlement 存在时同步设置与番茄钟结束记录；ad-hoc 构建安全回退本地。
+- [ ] iCloud entitlement 存在时只同步轻量设置；专注历史始终保存在本机，ad-hoc 构建安全回退本地。
 
 ### 更新
 

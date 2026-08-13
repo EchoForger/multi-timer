@@ -40,6 +40,19 @@ final class AppModel: ObservableObject {
                 pomodoro.focusStartedAt = max(0, (pomodoro.finishAt ?? now) - TimeInterval(settings.pomodoroWorkSeconds))
             }
         }
+        if pomodoro.phase == .work, pomodoro.pausedRemaining == nil, pomodoro.focusSegmentStartedAt == nil {
+            pomodoro.focusSegmentStartedAt = pomodoro.focusStartedAt
+        }
+        if pomodoro.phase == .work,
+           pomodoro.pausedRemaining != nil,
+           pomodoro.focusIntervals.isEmpty,
+           let startedAt = pomodoro.focusStartedAt {
+            let elapsed = max(0, TimeInterval(settings.pomodoroWorkSeconds) - (pomodoro.pausedRemaining ?? 0))
+            if elapsed > 0 {
+                pomodoro.focusIntervals = [FocusInterval(startedAt: startedAt, endedAt: startedAt + elapsed)]
+            }
+        }
+        try? statsStore.save(stats)
 
         ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -89,13 +102,33 @@ final class AppModel: ObservableObject {
     }
 
     var todayCount: Int {
-        stats.sessions.filter { session in
-            session.completed && session.endedAt.map { Calendar.current.isDateInToday(Date(timeIntervalSince1970: $0)) } == true
-        }.count
+        todaySummary.completedPomodoros
     }
 
     var todayFocusSessionCount: Int {
-        stats.sessions.filter { Calendar.current.isDateInToday(Date(timeIntervalSince1970: $0.startedAt)) }.count
+        todaySummary.focusSessions
+    }
+
+    var todayFocusedSeconds: TimeInterval { todaySummary.focusedSeconds }
+
+    var todayGoalMinutes: Int? {
+        FocusAnalytics.targetMinutes(
+            on: FocusAnalytics.dayKey(for: Date(timeIntervalSince1970: now)),
+            goals: settings.dailyFocusGoals
+        )
+    }
+
+    var currentFocusStreak: Int {
+        FocusAnalytics.currentStreak(
+            stats: stats,
+            goals: settings.dailyFocusGoals,
+            now: Date(timeIntervalSince1970: now)
+        )
+    }
+
+    private var todaySummary: DailyFocusSummary {
+        let key = FocusAnalytics.dayKey(for: Date(timeIntervalSince1970: now))
+        return FocusAnalytics.dailySummaries(from: stats)[key] ?? DailyFocusSummary(day: key)
     }
 
     func startCountdown(label: String, seconds: Int) {
@@ -206,13 +239,15 @@ final class AppModel: ObservableObject {
     }
 
     func startPomodoro() {
+        let timestamp = Date().timeIntervalSince1970
         switch pomodoro.phase {
         case .idle, .ready:
-            beginWork()
+            beginWork(at: timestamp)
         case .work, .rest:
             if let paused = pomodoro.pausedRemaining {
-                pomodoro.finishAt = now + paused
+                pomodoro.finishAt = timestamp + paused
                 pomodoro.pausedRemaining = nil
+                if pomodoro.phase == .work { pomodoro.resumeFocus(at: timestamp) }
             }
         }
         save()
@@ -221,11 +256,14 @@ final class AppModel: ObservableObject {
 
     func togglePomodoroPause() {
         guard pomodoro.phase == .work || pomodoro.phase == .rest else { return }
+        let timestamp = Date().timeIntervalSince1970
         if let paused = pomodoro.pausedRemaining {
-            pomodoro.finishAt = now + paused
+            pomodoro.finishAt = timestamp + paused
             pomodoro.pausedRemaining = nil
+            if pomodoro.phase == .work { pomodoro.resumeFocus(at: timestamp) }
         } else {
-            pomodoro.pausedRemaining = pomodoroRemaining
+            if pomodoro.phase == .work { pomodoro.pauseFocus(at: timestamp) }
+            pomodoro.pausedRemaining = max(0, (pomodoro.finishAt ?? timestamp) - timestamp)
             pomodoro.finishAt = nil
         }
         save()
@@ -233,31 +271,34 @@ final class AppModel: ObservableObject {
     }
 
     func skipPomodoro() {
+        let timestamp = Date().timeIntervalSince1970
         switch pomodoro.phase {
         case .work:
-            finishFocusSession(completed: false, at: now)
-            beginRest()
+            finishFocusSession(completed: false, at: timestamp)
+            beginRest(at: timestamp)
         case .rest:
-            beginWork()
+            beginWork(at: timestamp)
         case .ready, .idle:
-            beginWork()
+            beginWork(at: timestamp)
         }
         save()
     }
 
     func extendPomodoro(by seconds: Int = 300) {
         guard pomodoro.phase == .work || pomodoro.phase == .rest else { return }
+        let timestamp = Date().timeIntervalSince1970
         if pomodoro.pausedRemaining != nil {
             pomodoro.pausedRemaining! += TimeInterval(seconds)
         } else {
-            pomodoro.finishAt = (pomodoro.finishAt ?? now) + TimeInterval(seconds)
+            pomodoro.finishAt = (pomodoro.finishAt ?? timestamp) + TimeInterval(seconds)
         }
         save()
         onStatusChanged?()
     }
 
     func stopPomodoro() {
-        if pomodoro.phase == .work { finishFocusSession(completed: false, at: now) }
+        let timestamp = Date().timeIntervalSince1970
+        if pomodoro.phase == .work { finishFocusSession(completed: false, at: timestamp) }
         pomodoro = PomodoroSnapshot()
         save()
         onStatusChanged?()
@@ -276,6 +317,21 @@ final class AppModel: ObservableObject {
         onPersistenceChanged?()
     }
 
+    func setDailyFocusGoal(minutes: Int?) {
+        let day = FocusAnalytics.dayKey(for: Date(timeIntervalSince1970: now))
+        let target = minutes.map { min(max(15, Int((Double($0) / 15).rounded()) * 15), 480) }
+        settings.dailyFocusGoals.removeAll { $0.effectiveDay == day }
+        settings.dailyFocusGoals.append(DailyFocusGoal(effectiveDay: day, targetMinutes: target))
+        settings.dailyFocusGoals.sort { $0.effectiveDay < $1.effectiveDay }
+        settings.hasSeenFocusGoalPrompt = true
+        save()
+    }
+
+    func dismissFocusGoalPrompt() {
+        settings.hasSeenFocusGoalPrompt = true
+        save()
+    }
+
     func skip(version: String) {
         document.skippedUpdate = version
         save()
@@ -283,20 +339,10 @@ final class AppModel: ObservableObject {
 
     var skippedUpdate: String? { document.skippedUpdate }
 
-    func mergeCloud(settings cloudSettings: AppSettings?, stats cloudStats: PomodoroStats?) {
+    func mergeCloud(settings cloudSettings: AppSettings?) {
         var changed = false
         if let cloudSettings, cloudSettings.syncRevision > settings.syncRevision {
             settings = cloudSettings
-            changed = true
-        }
-        if let cloudStats, cloudStats.syncRevision > stats.syncRevision {
-            var sessionsByID = Dictionary(uniqueKeysWithValues: stats.sessions.map { ($0.id, $0) })
-            for session in cloudStats.sessions {
-                sessionsByID[session.id] = session
-            }
-            stats.sessions = sessionsByID.values.sorted { $0.startedAt < $1.startedAt }
-            stats.syncRevision = cloudStats.syncRevision
-            try? statsStore.save(stats)
             changed = true
         }
         if changed { save() }
@@ -327,7 +373,7 @@ final class AppModel: ObservableObject {
     }
 
     private func save() {
-        document.schemaVersion = 5
+        document.schemaVersion = 6
         document.timers = timers
         document.settings = settings
         document.pomodoro = pomodoro
@@ -358,9 +404,9 @@ final class AppModel: ObservableObject {
         let completed = pomodoro.phase
         if completed == .work {
             finishFocusSession(completed: true, at: pomodoro.finishAt ?? now)
-            beginRest()
+            beginRest(at: now)
         } else if settings.pomodoroAutoCycle {
-            beginWork()
+            beginWork(at: now)
         } else {
             pomodoro.phase = .ready
             pomodoro.finishAt = nil
@@ -370,26 +416,25 @@ final class AppModel: ObservableObject {
         onStatusChanged?()
     }
 
-    private func beginWork() {
+    private func beginWork(at timestamp: TimeInterval) {
         pomodoro.phase = .work
         pomodoro.pausedRemaining = nil
-        pomodoro.finishAt = now + TimeInterval(settings.pomodoroWorkSeconds)
-        pomodoro.focusStartedAt = now
+        pomodoro.finishAt = timestamp + TimeInterval(settings.pomodoroWorkSeconds)
+        pomodoro.beginFocus(at: timestamp)
         onStatusChanged?()
     }
 
-    private func beginRest() {
+    private func beginRest(at timestamp: TimeInterval) {
         pomodoro.phase = .rest
         pomodoro.pausedRemaining = nil
-        pomodoro.finishAt = now + TimeInterval(settings.pomodoroBreakSeconds)
+        pomodoro.finishAt = timestamp + TimeInterval(settings.pomodoroBreakSeconds)
         pomodoro.focusStartedAt = nil
         onStatusChanged?()
     }
 
     private func finishFocusSession(completed: Bool, at endedAt: TimeInterval) {
-        guard let startedAt = pomodoro.focusStartedAt else { return }
-        stats.sessions.append(FocusSession(startedAt: startedAt, endedAt: max(startedAt, endedAt), completed: completed))
-        pomodoro.focusStartedAt = nil
+        guard let session = pomodoro.finishFocus(at: endedAt, completed: completed) else { return }
+        stats.sessions.append(session)
         persistStats()
     }
 

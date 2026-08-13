@@ -7,7 +7,6 @@ final class CloudSyncService {
     private let store = NSUbiquitousKeyValueStore.default
     private weak var model: AppModel?
     private let settingsKey = "multitimer.settings.v1"
-    private let statsKey = "multitimer.pomodoro-stats.v1"
     private var enabled = false
 
     func configure(model: AppModel) {
@@ -30,7 +29,6 @@ final class CloudSyncService {
         guard enabled, let model else { return }
         let encoder = JSONEncoder()
         if let settings = try? encoder.encode(model.settings) { store.set(settings, forKey: settingsKey) }
-        if let stats = try? encoder.encode(model.stats) { store.set(stats, forKey: statsKey) }
         _ = store.synchronize()
     }
 
@@ -38,8 +36,7 @@ final class CloudSyncService {
         guard enabled, let model else { return }
         let decoder = JSONDecoder()
         let settings = store.data(forKey: settingsKey).flatMap { try? decoder.decode(AppSettings.self, from: $0) }
-        let stats = store.data(forKey: statsKey).flatMap { try? decoder.decode(PomodoroStats.self, from: $0) }
-        model.mergeCloud(settings: settings, stats: stats)
+        model.mergeCloud(settings: settings)
     }
 
     private var hasCloudEntitlement: Bool {

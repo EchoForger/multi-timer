@@ -37,7 +37,21 @@ struct PomodoroView: View {
                     Button("Start Focus") {
                         model.startPomodoro()
                     }
-                    .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity)
+                }
+
+                if let goal = model.todayGoalMinutes {
+                    VStack(spacing: 3) {
+                        ProgressView(value: min(1, model.todayFocusedSeconds / TimeInterval(goal * 60)))
+                        HStack {
+                            Text("Daily goal")
+                            Spacer()
+                            Text("\(Int(model.todayFocusedSeconds) / 60) / \(goal) min")
+                                .monospacedDigit()
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(2)

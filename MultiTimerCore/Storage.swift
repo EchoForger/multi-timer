@@ -86,11 +86,18 @@ public final class StatsStore: @unchecked Sendable {
         calendar: Calendar = .current
     ) -> [FocusSession] {
         let stats = stats ?? load()
-        let dayStart = calendar.startOfDay(for: day).timeIntervalSince1970
-        let dayEnd = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: day))!.timeIntervalSince1970
+        let selectedKey = FocusAnalytics.dayKey(for: day, timeZone: calendar.timeZone)
         return stats.sessions.filter { session in
-            guard let endedAt = session.endedAt else { return false }
-            return session.startedAt < dayEnd && endedAt > dayStart
+            let timeZone = TimeZone(identifier: session.timeZoneIdentifier) ?? calendar.timeZone
+            var sessionCalendar = Calendar(identifier: .gregorian)
+            sessionCalendar.timeZone = timeZone
+            guard let localDay = FocusAnalytics.date(for: selectedKey, timeZone: timeZone),
+                  let nextDay = sessionCalendar.date(byAdding: .day, value: 1, to: localDay) else { return false }
+            let dayStart = localDay.timeIntervalSince1970
+            let dayEnd = nextDay.timeIntervalSince1970
+            return session.focusIntervals.contains { $0.startedAt < dayEnd && $0.endedAt > dayStart }
+                || (session.startedAt >= dayStart && session.startedAt < dayEnd)
+                || session.endedAt.map { $0 >= dayStart && $0 < dayEnd } == true
         }
     }
 
@@ -99,12 +106,8 @@ public final class StatsStore: @unchecked Sendable {
         from stats: PomodoroStats? = nil,
         calendar: Calendar = .current
     ) -> TimeInterval {
-        let dayStart = calendar.startOfDay(for: day).timeIntervalSince1970
-        let dayEnd = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: day))!.timeIntervalSince1970
-        return sessions(in: day, from: stats, calendar: calendar).reduce(0) { total, session in
-            let start = max(dayStart, session.startedAt)
-            let end = min(dayEnd, session.endedAt ?? start)
-            return total + max(0, end - start)
-        }
+        let stats = stats ?? load()
+        let key = FocusAnalytics.dayKey(for: day, timeZone: calendar.timeZone)
+        return FocusAnalytics.dailySummaries(from: stats)[key]?.focusedSeconds ?? 0
     }
 }

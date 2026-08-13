@@ -34,7 +34,7 @@ struct PopoverView: View {
     private var preferredHeight: CGFloat {
         switch router.page {
         case .settings: return 620
-        case .statistics: return 520
+        case .statistics: return 680
         case .timers:
             let creation: CGFloat = kind == .countdown ? 166 : 105
             let pomodoro: CGFloat = model.settings.showPomodoro ? 80 : 0
